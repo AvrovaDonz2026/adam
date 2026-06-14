@@ -510,6 +510,23 @@ db_lookup_installed() {
     awk -F '\t' -v p="$key" '$1 == p || $2 == p || $3 == p { print; exit }' "$(table_path installed)"
 }
 
+db_is_installed() {
+    [ -n "$(db_lookup_installed "$1" || true)" ]
+}
+
+db_set_installed_auto() {
+    pkgbase="$1"
+    automatic="$2"
+    tmp="${ADAM_STATE_DIR}/tables/installed.tsv.tmp.$$"
+    awk -F '\t' -v OFS='\t' -v p="$pkgbase" -v a="$automatic" '
+        $1 == p {
+            $7 = a
+        }
+        { print }
+    ' "$(table_path installed)" > "$tmp"
+    mv "$tmp" "$(table_path installed)"
+}
+
 db_list_installed() {
     cat "$(table_path installed)"
 }
@@ -665,6 +682,73 @@ plan_dep_tree() {
     )
 }
 
+write_reachable_auto_roots() {
+    roots_file="$1"
+    out_file="$2"
+    tmp_plan="${ADAM_STATE_DIR}/reachable-plan.$$"
+    tmp_visit="${ADAM_STATE_DIR}/reachable-visited.$$"
+    old_plan="${PLAN_FILE:-}"
+    old_visit="${VISITED_FILE:-}"
+
+    PLAN_FILE="$tmp_plan"
+    VISITED_FILE="$tmp_visit"
+    : > "$PLAN_FILE"
+    : > "$VISITED_FILE"
+    while IFS= read -r root; do
+        [ -n "$root" ] || continue
+        plan_dep_tree "$root"
+    done < "$roots_file"
+    awk '!seen[$0]++' "$PLAN_FILE" > "$out_file"
+    rm -f "$PLAN_FILE" "$VISITED_FILE"
+
+    PLAN_FILE="$old_plan"
+    VISITED_FILE="$old_visit"
+}
+
+write_manual_roots() {
+    manual_roots_output_file="$1"
+    manual_roots_exclude_pkgpath="${2:-}"
+    : > "$manual_roots_output_file"
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        manual_pkgbase=$(printf '%s\n' "$line" | awk -F '\t' '{print $1}')
+        manual_pkgpath=$(printf '%s\n' "$line" | awk -F '\t' '{print $3}')
+        manual_automatic=$(printf '%s\n' "$line" | awk -F '\t' '{print $7}')
+        manual_mark=$(pkg_mark_status "$manual_pkgbase" "")
+        if [ "$manual_mark" = "auto" ]; then
+            manual_automatic=1
+        elif [ "$manual_mark" = "manual" ] || [ "$manual_mark" = "hold" ]; then
+            manual_automatic=0
+        fi
+        if [ "$manual_automatic" != "1" ] && [ -n "$manual_pkgpath" ] && [ "$manual_pkgpath" != "$manual_roots_exclude_pkgpath" ]; then
+            printf '%s\n' "$manual_pkgpath" >> "$manual_roots_output_file"
+        fi
+    done < "$(table_path installed)"
+}
+
+write_autoremove_candidates() {
+    candidates_file="$1"
+    manual_roots_file="${ADAM_STATE_DIR}/manual-roots.$$"
+    reachable_paths_file="${ADAM_STATE_DIR}/reachable.$$"
+    write_manual_roots "$manual_roots_file"
+    write_reachable_auto_roots "$manual_roots_file" "$reachable_paths_file"
+    : > "$candidates_file"
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        pkgbase=$(printf '%s\n' "$line" | awk -F '\t' '{print $1}')
+        pkgpath=$(printf '%s\n' "$line" | awk -F '\t' '{print $3}')
+        automatic=$(printf '%s\n' "$line" | awk -F '\t' '{print $7}')
+        mark=$(pkg_mark_status "$pkgbase" "")
+        if [ "$mark" = "auto" ]; then
+            automatic=1
+        fi
+        if [ "$automatic" = "1" ] && [ "$mark" != "hold" ] && ! grep -Fxq "$pkgpath" "$reachable_paths_file" 2>/dev/null; then
+            printf '%s\t%s\n' "$pkgbase" "$pkgpath" >> "$candidates_file"
+        fi
+    done < "$(table_path installed)"
+    rm -f "$manual_roots_file" "$reachable_paths_file"
+}
+
 pkg_mark_status() {
     pkgbase="$1"
     status="$2"
@@ -737,6 +821,7 @@ maybe_run_pkgin() {
 
 pkgsrc_install_pkgpath() {
     pkgpath="$1"
+    automatic="${2:-0}"
     ensure_pkgsrc_tree
     pkgdir=$(pkgpath_to_abspath "$pkgpath")
     [ -d "$pkgdir" ] || die "missing pkgsrc path: $pkgpath"
@@ -754,7 +839,7 @@ pkgsrc_install_pkgpath() {
     else
         run_as_root "sh -c $(printf %s "$cmd" | sed "s/'/'\\\\''/g;1s/^/'/;\$s/\$/'/")"
     fi
-    record_install "$meta" "source" "0"
+    record_install "$meta" "source" "$automatic"
 }
 
 build_pkgpath() {
@@ -764,6 +849,20 @@ build_pkgpath() {
     [ -d "$pkgdir" ] || die "missing pkgsrc path: $pkgpath"
     makecmd=$(pkgsrc_make)
     cmd="cd '$pkgdir' && $makecmd package"
+    if [ "$ADAM_DRY_RUN" -eq 1 ]; then
+        printf '+ %s\n' "$cmd"
+        return 0
+    fi
+    sh -c "$cmd"
+}
+
+fetch_pkgpath() {
+    pkgpath="$1"
+    ensure_pkgsrc_tree
+    pkgdir=$(pkgpath_to_abspath "$pkgpath")
+    [ -d "$pkgdir" ] || die "missing pkgsrc path: $pkgpath"
+    makecmd=$(pkgsrc_make)
+    cmd="cd '$pkgdir' && $makecmd fetch"
     if [ "$ADAM_DRY_RUN" -eq 1 ]; then
         printf '+ %s\n' "$cmd"
         return 0
@@ -800,14 +899,28 @@ cmd_install() {
         return 0
     fi
     plan_install_targets "$@"
+    requested_file="${ADAM_STATE_DIR}/requested.$$"
+    : > "$requested_file"
+    for arg in "$@"; do
+        target=$(resolve_pkgpath_from_name "$arg")
+        [ -n "$target" ] && printf '%s\n' "$target" >> "$requested_file"
+    done
     while IFS= read -r target; do
         [ -n "$target" ] || continue
-        pkgsrc_install_pkgpath "$target"
-        txid=$(now_id)
-        db_add_transaction "$txid" install "$target" ok "-"
+        automatic=1
+        if grep -Fxq "$target" "$requested_file" 2>/dev/null; then
+            automatic=0
+        fi
+        pkgsrc_install_pkgpath "$target" "$automatic"
+        if [ "$ADAM_DRY_RUN" -ne 1 ]; then
+            txid=$(now_id)
+            db_add_transaction "$txid" install "$target" ok "-"
+        fi
     done < "$PLAN_FILE"
-    rm -f "$PLAN_FILE"
-    db_build_snapshot
+    rm -f "$PLAN_FILE" "$requested_file"
+    if [ "$ADAM_DRY_RUN" -ne 1 ]; then
+        db_build_snapshot
+    fi
     printf 'installed\n'
 }
 
@@ -819,11 +932,15 @@ cmd_build() {
     while IFS= read -r target; do
         [ -n "$target" ] || continue
         build_pkgpath "$target"
-        txid=$(now_id)
-        db_add_transaction "$txid" build "$target" ok "-"
+        if [ "$ADAM_DRY_RUN" -ne 1 ]; then
+            txid=$(now_id)
+            db_add_transaction "$txid" build "$target" ok "-"
+        fi
     done < "$PLAN_FILE"
     rm -f "$PLAN_FILE"
-    db_build_snapshot
+    if [ "$ADAM_DRY_RUN" -ne 1 ]; then
+        db_build_snapshot
+    fi
     printf 'built\n'
 }
 
@@ -836,6 +953,9 @@ cmd_remove() {
         else
             run_as_root "pkg_delete '$pkg'" || true
         fi
+        if [ "$ADAM_DRY_RUN" -eq 1 ]; then
+            continue
+        fi
         pkgpath=$(resolve_pkgpath_from_name "$pkg" || true)
         if [ -n "$pkgpath" ]; then
             line=$(resolve_pkgmeta "$pkgpath")
@@ -846,7 +966,9 @@ cmd_remove() {
         db_remove_installed "$pkgbase"
         db_add_transaction "$(now_id)" remove "$pkg" ok "-"
     done
-    db_build_snapshot
+    if [ "$ADAM_DRY_RUN" -ne 1 ]; then
+        db_build_snapshot
+    fi
     printf 'removed\n'
 }
 
@@ -861,12 +983,16 @@ cmd_upgrade() {
         pkgpath=$(printf '%s\n' "$line" | awk -F '\t' '{print $3}')
         ensure_not_held "$pkgbase"
         pkgsrc_install_pkgpath "$pkgpath"
-        db_add_transaction "$(now_id)" upgrade "$pkgbase" ok "-"
+        if [ "$ADAM_DRY_RUN" -ne 1 ]; then
+            db_add_transaction "$(now_id)" upgrade "$pkgbase" ok "-"
+        fi
         updated=1
     done <<EOF
 $(db_list_installed)
 EOF
-    db_build_snapshot
+    if [ "$ADAM_DRY_RUN" -ne 1 ]; then
+        db_build_snapshot
+    fi
     [ "$updated" -eq 1 ] && printf 'upgraded\n' || printf 'nothing to do\n'
 }
 
@@ -878,7 +1004,30 @@ cmd_autoremove() {
     if [ "$ADAM_BINARY_MODE" -eq 1 ] && maybe_run_pkgin autoremove; then
         return 0
     fi
-    printf 'autoremove not fully implemented yet\n'
+    candidates="${ADAM_STATE_DIR}/autoremove.$$"
+    write_autoremove_candidates "$candidates"
+    if [ ! -s "$candidates" ]; then
+        rm -f "$candidates"
+        printf 'nothing to do\n'
+        return 0
+    fi
+    while IFS='	' read -r pkgbase pkgpath; do
+        [ -n "$pkgbase" ] || continue
+        ensure_not_held "$pkgbase"
+        if [ "$ADAM_DRY_RUN" -eq 1 ]; then
+            printf '+ pkg_delete %s\n' "$pkgbase"
+            continue
+        fi
+        run_as_root "pkg_delete '$pkgbase'" || true
+        db_remove_installed "$pkgbase"
+        db_add_transaction "$(now_id)" autoremove "$pkgbase" ok "-"
+    done < "$candidates"
+    rm -f "$candidates"
+    if [ "$ADAM_DRY_RUN" -eq 1 ]; then
+        return 0
+    fi
+    db_build_snapshot
+    printf 'removed\n'
 }
 
 cmd_search() {
@@ -981,6 +1130,12 @@ cmd_mark() {
                     unhold) db_set_mark "$pkgbase" "" ;;
                     *) db_set_mark "$pkgbase" "$sub" ;;
                 esac
+                if db_is_installed "$pkgbase"; then
+                    case "$sub" in
+                        manual|hold|unhold) db_set_installed_auto "$pkgbase" 0 ;;
+                        auto) db_set_installed_auto "$pkgbase" 1 ;;
+                    esac
+                fi
             done
             db_build_snapshot
             ;;
@@ -988,7 +1143,32 @@ cmd_mark() {
             awk -F '\t' -v m="${sub#show}" '$2 == m { print $1 }' "$(table_path marks)"
             ;;
         minimize-manual)
-            printf 'minimize-manual not yet implemented\n'
+            changed=0
+            while IFS= read -r line; do
+                [ -n "$line" ] || continue
+                pkgbase=$(printf '%s\n' "$line" | awk -F '\t' '{print $1}')
+                pkgpath=$(printf '%s\n' "$line" | awk -F '\t' '{print $3}')
+                automatic=$(printf '%s\n' "$line" | awk -F '\t' '{print $7}')
+                mark=$(pkg_mark_status "$pkgbase" "")
+                if [ "$mark" = "hold" ]; then
+                    continue
+                fi
+                if [ "$automatic" != "1" ] && [ "$mark" != "auto" ] && [ -n "$pkgpath" ]; then
+                    roots_file="${ADAM_STATE_DIR}/manual-roots.$$"
+                    reachable_file="${ADAM_STATE_DIR}/reachable.$$"
+                    write_manual_roots "$roots_file" "$pkgpath"
+                    write_reachable_auto_roots "$roots_file" "$reachable_file"
+                    if grep -Fxq "$pkgpath" "$reachable_file" 2>/dev/null; then
+                        db_set_mark "$pkgbase" auto
+                        db_set_installed_auto "$pkgbase" 1
+                        printf '%s\n' "$pkgbase"
+                        changed=1
+                    fi
+                    rm -f "$roots_file" "$reachable_file"
+                fi
+            done < "$(table_path installed)"
+            db_build_snapshot
+            [ "$changed" -eq 1 ] || printf 'nothing to do\n'
             ;;
         *)
             die "unknown mark subcommand: $sub"
@@ -1071,7 +1251,18 @@ cmd_download() {
     if [ "$ADAM_BINARY_MODE" -eq 1 ] && maybe_run_pkgin download "$*"; then
         return 0
     fi
-    printf 'download not fully implemented yet\n'
+    for pkg in "$@"; do
+        pkgpath=$(resolve_pkgpath_from_name "$pkg")
+        [ -n "$pkgpath" ] || die "unknown package: $pkg"
+        fetch_pkgpath "$pkgpath"
+        if [ "$ADAM_DRY_RUN" -ne 1 ]; then
+            db_add_transaction "$(now_id)" download "$pkgpath" ok "-"
+        fi
+    done
+    if [ "$ADAM_DRY_RUN" -ne 1 ]; then
+        db_build_snapshot
+    fi
+    printf 'downloaded\n'
 }
 
 cmd_build_dep() {
@@ -1158,7 +1349,17 @@ cmd_clean() {
 }
 
 cmd_autoclean() {
-    printf 'autoclean not fully implemented yet\n'
+    count=0
+    for path in "$ADAM_STATE_DIR"/plan.* "$ADAM_STATE_DIR"/visited.* "$ADAM_STATE_DIR"/*.tmp.*; do
+        [ -f "$path" ] || continue
+        if [ "$ADAM_DRY_RUN" -eq 1 ]; then
+            printf '+ rm -f %s\n' "$path"
+        else
+            rm -f "$path"
+        fi
+        count=$((count + 1))
+    done
+    printf 'cleaned %s files\n' "$count"
 }
 
 cmd_check() {
@@ -1200,7 +1401,27 @@ cmd_pkgnames() {
 }
 
 cmd_edit_sources() {
-    printf 'edit-sources is not implemented yet\n'
+    cfg="$ADAM_CONFIG_FILE"
+    if [ -z "$cfg" ]; then
+        cfg="${HOME:-.}/.config/adam/config"
+    fi
+    dir=$(dirname "$cfg")
+    file_mkdir_p "$dir"
+    if [ ! -f "$cfg" ]; then
+        {
+            printf '# Adam configuration\n'
+            printf '# Edit these values to change pkgsrc and Adam defaults.\n'
+            printf 'ADAM_PKGSRCDIR=%s\n' "$ADAM_PKGSRCDIR"
+            printf 'ADAM_LOCALBASE=%s\n' "$ADAM_LOCALBASE"
+            printf 'ADAM_STATE_DIR=%s\n' "$ADAM_STATE_DIR"
+            printf 'ADAM_DB_PATH=%s\n' "$ADAM_DB_PATH"
+            printf 'ADAM_MAKE_CMD=%s\n' "$(pkgsrc_make)"
+            printf 'ADAM_ROOT_CMD=%s\n' "$ADAM_ROOT_CMD"
+            printf 'ADAM_PKGIN_CMD=%s\n' "$ADAM_PKGIN_CMD"
+        } > "$cfg"
+    fi
+    editor="${EDITOR:-vi}"
+    run_cmd "$editor '$cfg'"
 }
 
 dispatch() {

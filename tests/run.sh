@@ -78,6 +78,10 @@ assert_fail() {
     fi
 }
 
+transaction_count() {
+    awk 'END { print NR + 0 }' "$STATE/tables/transactions.tsv"
+}
+
 mkdir -p "$BIN" "$NO_ADMIN_BIN" "$STATE" "$ALT_STATE" "$COVERED"
 mkdir -p "$PKGSRC/category/dep" "$PKGSRC/category/app" "$PKGSRC/category/rev" "$PKGSRC/category/old" "$PKGSRC/doc"
 ln -s "$PKGSRC" "$LINKED_PKGSRC"
@@ -121,7 +125,7 @@ case "$1" in
             *) echo ;;
         esac
         ;;
-    install|package|configure)
+    install|package|configure|fetch)
         echo "$PWD $1" >> "${ADAM_TEST_LOG}"
         ;;
     show-options)
@@ -215,6 +219,16 @@ run_config_edit() {
         config edit
 }
 
+run_edit_sources() {
+    PATH="$BIN:$PATH" ADAM_TEST_LOG="$LOG" EDITOR=: "$ROOT/adam" \
+        --pkgsrc "$PKGSRC" \
+        --db "$STATE/edit-sources-adam-pkg.db" \
+        --make make \
+        --root-cmd none \
+        --config "$WORK/adam.conf" \
+        edit-sources
+}
+
 run_adam update >/dev/null
 cover update
 [ -s "$STATE/tables/available.tsv" ] || fail "update creates available index"
@@ -231,20 +245,31 @@ linked_plan=$(run_adam_linked_pkgsrc plan app)
 assert_eq "$expected" "$linked_plan" "plan works with symlinked pkgsrc root"
 ok "plan works with symlinked pkgsrc root"
 
+tx_before=$(transaction_count)
 run_adam --dry-run install app > "$WORK/dryrun.out"
 cover install
 assert_contains "$WORK/dryrun.out" "category/dep" "dry run includes dependency"
 assert_contains "$WORK/dryrun.out" "category/app" "dry run includes target"
+tx_after=$(transaction_count)
+assert_eq "$tx_before" "$tx_after" "dry-run install leaves transactions unchanged"
 ok "dry-run install prints source build commands"
 
 run_adam install app >/dev/null
 assert_contains "$LOG" "category/dep install" "source install runs dependency install"
 assert_contains "$LOG" "category/app install" "source install runs target install"
+awk -F '\t' '$1 == "dep" && $7 == "1" { found = 1 } END { exit found ? 0 : 1 }' "$STATE/tables/installed.tsv" || fail "dependency is recorded automatic"
+awk -F '\t' '$1 == "app" && $7 == "0" { found = 1 } END { exit found ? 0 : 1 }' "$STATE/tables/installed.tsv" || fail "requested package is recorded manual"
 ok "source install records dependency-first commands"
 
 run_adam reinstall app >/dev/null
 cover reinstall
 ok "reinstall reuses install path"
+
+tx_before=$(transaction_count)
+run_adam --dry-run build app > "$WORK/build-dry.out"
+assert_contains "$WORK/build-dry.out" "package" "dry-run build prints package target"
+tx_after=$(transaction_count)
+assert_eq "$tx_before" "$tx_after" "dry-run build leaves transactions unchanged"
 
 run_adam build app >/dev/null
 cover build
@@ -392,13 +417,21 @@ run_adam --ignore-hold --dry-run install app >/dev/null
 ok "ignore-hold allows planning"
 
 run_adam mark minimize-manual > "$WORK/minimize.out"
-assert_contains "$WORK/minimize.out" "not yet implemented" "minimize-manual reports placeholder"
-ok "mark minimize-manual reports current placeholder"
+assert_contains "$WORK/minimize.out" "nothing to do" "minimize-manual reports no-op clearly"
+ok "mark minimize-manual handles no-op"
 
 run_adam mark unhold app
 run_adam mark showhold > "$WORK/showhold-after.out"
 assert_not_contains "$WORK/showhold-after.out" "app" "unhold removes hold"
 ok "mark unhold clears hold"
+
+tx_before=$(transaction_count)
+run_adam --dry-run remove app > "$WORK/remove-dry.out"
+assert_contains "$WORK/remove-dry.out" "pkg_delete" "dry-run remove prints delete command"
+run_adam list --installed > "$WORK/remove-dry-list.out"
+assert_contains "$WORK/remove-dry-list.out" "app-1.0" "dry-run remove keeps installed state"
+tx_after=$(transaction_count)
+assert_eq "$tx_before" "$tx_after" "dry-run remove leaves transactions unchanged"
 
 run_adam remove app >/dev/null
 cover remove
@@ -416,7 +449,46 @@ cover purge
 assert_contains "$LOG" "pkg_delete app" "purge invokes removal path"
 ok "purge invokes removal path"
 
+run_adam autoremove >/dev/null
+assert_contains "$LOG" "pkg_delete dep" "autoremove deletes orphan automatic dependency"
+run_adam list --installed > "$WORK/autoremove-list.out"
+assert_not_contains "$WORK/autoremove-list.out" "dep-1.0" "autoremove removes dependency from state"
+ok "autoremove removes orphan automatic packages"
+
 run_adam install app >/dev/null
+run_adam remove app >/dev/null
+run_adam --dry-run autoremove > "$WORK/autoremove-dry.out"
+assert_contains "$WORK/autoremove-dry.out" "pkg_delete dep" "autoremove dry-run prints deletion"
+run_adam list --installed > "$WORK/autoremove-dry-list.out"
+assert_contains "$WORK/autoremove-dry-list.out" "dep-1.0" "autoremove dry-run keeps state"
+ok "autoremove dry-run leaves state unchanged"
+
+run_adam mark hold dep
+run_adam autoremove > "$WORK/autoremove-hold.out"
+assert_contains "$WORK/autoremove-hold.out" "nothing to do" "held automatic package is skipped"
+run_adam mark unhold dep
+ok "autoremove respects holds"
+
+run_adam mark manual dep
+awk -F '\t' '$1 == "dep" && $7 == "0" { found = 1 } END { exit found ? 0 : 1 }' "$STATE/tables/installed.tsv" || fail "mark manual updates automatic flag"
+run_adam mark auto dep
+awk -F '\t' '$1 == "dep" && $7 == "1" { found = 1 } END { exit found ? 0 : 1 }' "$STATE/tables/installed.tsv" || fail "mark auto updates automatic flag"
+ok "mark manual/auto updates installed automatic flag"
+
+run_adam install app >/dev/null
+run_adam mark manual app dep
+run_adam mark minimize-manual > "$WORK/minimize-dep.out"
+assert_contains "$WORK/minimize-dep.out" "dep" "minimize-manual marks dependency auto"
+awk -F '\t' '$1 == "dep" && $7 == "1" { found = 1 } END { exit found ? 0 : 1 }' "$STATE/tables/installed.tsv" || fail "minimize-manual updates dependency automatic flag"
+ok "mark minimize-manual minimizes reachable dependencies"
+
+run_adam install app >/dev/null
+tx_before=$(transaction_count)
+run_adam --dry-run upgrade > "$WORK/upgrade-dry.out"
+assert_contains "$WORK/upgrade-dry.out" "upgraded" "dry-run upgrade reports planned upgrade"
+tx_after=$(transaction_count)
+assert_eq "$tx_before" "$tx_after" "dry-run upgrade leaves transactions unchanged"
+
 run_adam upgrade >/dev/null
 cover upgrade
 assert_contains "$LOG" "category/app install" "upgrade reinstalls installed app"
@@ -506,17 +578,24 @@ ok "clean reports cleaned"
 
 run_adam autoclean > "$WORK/autoclean.out"
 cover autoclean
-assert_contains "$WORK/autoclean.out" "not fully implemented yet" "autoclean reports placeholder"
-ok "autoclean reports current placeholder"
+assert_contains "$WORK/autoclean.out" "cleaned" "autoclean reports cleaned count"
+ok "autoclean cleans Adam temp files conservatively"
 
-run_adam edit-sources > "$WORK/edit-sources.out"
+run_edit_sources > "$WORK/edit-sources.out"
 cover edit-sources
-assert_contains "$WORK/edit-sources.out" "not implemented yet" "edit-sources reports placeholder"
-ok "edit-sources reports current placeholder"
+assert_contains "$WORK/adam.conf" "ADAM_PKGSRCDIR" "edit-sources creates config template"
+ok "edit-sources creates and opens config file"
 
-run_adam download app > "$WORK/download-placeholder.out"
-assert_contains "$WORK/download-placeholder.out" "not fully implemented yet" "source download reports placeholder"
-ok "source download reports current placeholder"
+download_tx_before=$(awk -F '\t' '$2 == "download" { count++ } END { print count + 0 }' "$STATE/tables/transactions.tsv")
+run_adam --dry-run download app > "$WORK/download-dry.out"
+assert_contains "$WORK/download-dry.out" "make fetch" "source download dry-run prints fetch target"
+download_tx_after=$(awk -F '\t' '$2 == "download" { count++ } END { print count + 0 }' "$STATE/tables/transactions.tsv")
+assert_eq "$download_tx_before" "$download_tx_after" "source download dry-run leaves transactions unchanged"
+ok "source download dry-run does not mutate transactions"
+
+run_adam download app > "$WORK/download.out"
+assert_contains "$LOG" "category/app fetch" "source download runs fetch target"
+ok "source download fetches package distfiles"
 
 assert_fail "unknown command fails" run_adam no-such-command
 assert_contains "$WORK/assert.err" "unknown command" "unknown command error is clear"
