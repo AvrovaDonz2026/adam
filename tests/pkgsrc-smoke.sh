@@ -56,6 +56,22 @@ run_adam() {
         "$@"
 }
 
+run_adam_as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        run_adam "$@"
+        return 0
+    fi
+
+    command -v sudo >/dev/null 2>&1 || fail "sudo is required for real pkgsrc builds"
+
+    sudo "$ROOT/adam" \
+        --pkgsrc "$PKGSRC_DIR" \
+        --db "$STATE_DIR/adam-root-pkg.db" \
+        --make make \
+        --root-cmd none \
+        "$@"
+}
+
 ensure_pkgsrc
 
 sh -n "$ROOT/adam"
@@ -80,11 +96,10 @@ case "$MODE" in
     smoke)
         ;;
     build)
-        run_adam build "$TEST_PKG"
+        run_adam_as_root build "$TEST_PKG"
         ok "real pkgsrc build completed for $TEST_PKG"
         ;;
     *)
         fail "unknown mode: $MODE"
         ;;
 esac
-
