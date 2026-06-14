@@ -5,8 +5,11 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 TMPDIR=${TMPDIR:-/tmp}
 WORK="${TMPDIR}/adam-test.$$"
+mkdir -p "$WORK"
+WORK=$(CDPATH= cd -- "$WORK" && pwd -P)
 BIN="$WORK/bin"
 PKGSRC="$WORK/pkgsrc"
+LINKED_PKGSRC="$WORK/linked-pkgsrc"
 STATE="$WORK/state"
 LOG="$WORK/commands.log"
 
@@ -16,6 +19,7 @@ cleanup() {
 trap cleanup EXIT INT TERM HUP
 
 mkdir -p "$BIN" "$PKGSRC/category/dep" "$PKGSRC/category/app" "$STATE"
+ln -s "$PKGSRC" "$LINKED_PKGSRC"
 : > "$LOG"
 
 cat > "$BIN/make" <<'EOF'
@@ -88,6 +92,15 @@ run_adam() {
         "$@"
 }
 
+run_adam_linked_pkgsrc() {
+    PATH="$BIN:$PATH" ADAM_TEST_LOG="$LOG" "$ROOT/adam" \
+        --pkgsrc "$LINKED_PKGSRC" \
+        --db "$STATE/linked-adam-pkg.db" \
+        --make make \
+        --root-cmd none \
+        "$@"
+}
+
 run_adam update >/dev/null
 [ -s "$STATE/tables/available.tsv" ] || fail "update creates available index"
 ok "update creates available index"
@@ -99,6 +112,14 @@ expected=$(printf 'category/dep\ncategory/app')
     fail "plan orders dependencies before target"
 }
 ok "plan orders dependencies before target"
+
+run_adam_linked_pkgsrc update >/dev/null
+linked_plan=$(run_adam_linked_pkgsrc plan app)
+[ "$linked_plan" = "$expected" ] || {
+    printf 'expected:\n%s\nactual:\n%s\n' "$expected" "$linked_plan" >&2
+    fail "plan works with symlinked pkgsrc root"
+}
+ok "plan works with symlinked pkgsrc root"
 
 run_adam --dry-run install app > "$WORK/dryrun.out"
 grep "category/dep" "$WORK/dryrun.out" >/dev/null || fail "dry run includes dependency"

@@ -68,6 +68,12 @@ config_default() {
     : "${ADAM_PKGIN_CMD:=pkgin}"
 }
 
+normalize_paths() {
+    if [ -d "$ADAM_PKGSRCDIR" ]; then
+        ADAM_PKGSRCDIR=$(CDPATH= cd -- "$ADAM_PKGSRCDIR" && pwd -P)
+    fi
+}
+
 load_config_file() {
     cfg="$1"
     [ -f "$cfg" ] || return 0
@@ -1238,6 +1244,7 @@ main() {
     load_config_file "${HOME:-/nonexistent}/.config/adam/config" || true
     parse_args "$@"
     config_default
+    normalize_paths
     ensure_state
     dispatch ${ADAM_ARGS}
     db_build_snapshot
