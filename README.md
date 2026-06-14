@@ -1,5 +1,7 @@
 # Adam
 
+[![CI](https://github.com/AvrovaDonz2026/adam/actions/workflows/ci.yml/badge.svg)](https://github.com/AvrovaDonz2026/adam/actions/workflows/ci.yml)
+
 Adam is a source-first package manager front-end for pkgsrc, written in POSIX `sh`.
 
 It aims to provide an apt-style command surface while using pkgsrc as the primary package source.
@@ -137,6 +139,8 @@ sh tests/run.sh
 ```
 
 The test suite uses fake tools and a fake pkgsrc tree.
+
+CI runs this suite on Ubuntu, macOS, and NetBSD. The NetBSD job also downloads stable pkgsrc and checks Adam against the real `pkgtools/digest` metadata path. A real pkgsrc build job runs weekly or by manual workflow dispatch.
 
 ## More Documentation
 
