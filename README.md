@@ -137,3 +137,9 @@ sh tests/run.sh
 ```
 
 The test suite uses fake tools and a fake pkgsrc tree.
+
+## More Documentation
+
+- [Command reference](COMMANDS.md)
+- [Configuration](CONFIG.md)
+- [Architecture](ARCHITECTURE.md)
