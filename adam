@@ -68,6 +68,12 @@ config_default() {
     : "${ADAM_PKGIN_CMD:=pkgin}"
 }
 
+normalize_paths() {
+    if [ -d "$ADAM_PKGSRCDIR" ]; then
+        ADAM_PKGSRCDIR=$(CDPATH= cd -- "$ADAM_PKGSRCDIR" && pwd -P)
+    fi
+}
+
 load_config_file() {
     cfg="$1"
     [ -f "$cfg" ] || return 0
@@ -184,6 +190,7 @@ Core commands:
   search, show, list, depends, rdepends, policy, mark
   build, plan, source, download, build-dep, clean, autoclean
   check, doctor, stats, dumpavail, pkgnames, config, db
+  satisfy, indextargets, changelog, madison, audit, options, make
 
 Options:
   -y, --yes             assume yes
@@ -1031,6 +1038,76 @@ cmd_build_dep() {
     done
 }
 
+cmd_satisfy() {
+    [ "$#" -gt 0 ] || die "satisfy requires dependency expressions"
+    for expr in "$@"; do
+        name=$(printf '%s\n' "$expr" | sed 's/[<>=].*$//; s/[[:space:]]//g')
+        [ -n "$name" ] || die "cannot parse dependency expression: $expr"
+        cmd_install "$name"
+    done
+}
+
+cmd_indextargets() {
+    printf 'pkgsrc\t%s\n' "$ADAM_PKGSRCDIR"
+    printf 'state\t%s\n' "$ADAM_STATE_DIR"
+    printf 'database\t%s\n' "$ADAM_DB_PATH"
+    printf 'available\t%s\n' "$(table_path available)"
+    printf 'installed\t%s\n' "$(table_path installed)"
+}
+
+cmd_changelog() {
+    [ "$#" -gt 0 ] || die "changelog requires a package"
+    pkg="$1"
+    if [ -d "$ADAM_PKGSRCDIR/doc" ]; then
+        find "$ADAM_PKGSRCDIR/doc" -maxdepth 1 -type f -name 'CHANGES-*' -print 2>/dev/null | sort | while IFS= read -r f; do
+            grep -i "$pkg" "$f" || true
+        done
+    else
+        printf 'no pkgsrc doc directory found\n'
+    fi
+}
+
+cmd_madison() {
+    [ "$#" -gt 0 ] || die "madison requires a package"
+    for pkg in "$@"; do
+        pkgpath=$(resolve_pkgpath_from_name "$pkg")
+        [ -n "$pkgpath" ] || die "unknown package: $pkg"
+        line=$(resolve_pkgmeta "$pkgpath")
+        printf '%s | %s | pkgsrc:%s\n' "$(pkgmeta_field "$line" 1)" "$(pkgmeta_field "$line" 4)" "$(pkgmeta_field "$line" 3)"
+    done
+}
+
+cmd_audit() {
+    if command -v pkg_admin >/dev/null 2>&1; then
+        run_as_root "pkg_admin audit"
+    else
+        die "pkg_admin unavailable"
+    fi
+}
+
+cmd_options() {
+    [ "$#" -gt 0 ] || die "options requires a package"
+    pkgpath=$(resolve_pkgpath_from_name "$1")
+    dir=$(pkgpath_to_abspath "$pkgpath")
+    makecmd=$(pkgsrc_make)
+    (cd "$dir" && $makecmd show-options)
+}
+
+cmd_make() {
+    [ "$#" -ge 2 ] || die "make requires a package and target"
+    pkg="$1"
+    shift
+    pkgpath=$(resolve_pkgpath_from_name "$pkg")
+    dir=$(pkgpath_to_abspath "$pkgpath")
+    makecmd=$(pkgsrc_make)
+    target="$*"
+    if [ "$ADAM_DRY_RUN" -eq 1 ]; then
+        printf '+ cd %s && %s %s\n' "$dir" "$makecmd" "$target"
+        return 0
+    fi
+    (cd "$dir" && $makecmd $target)
+}
+
 cmd_clean() {
     rm -f "${ADAM_STATE_DIR}/plan."*
     printf 'cleaned\n'
@@ -1107,6 +1184,13 @@ dispatch() {
         source) cmd_source "$@" ;;
         download) cmd_download "$@" ;;
         build-dep) cmd_build_dep "$@" ;;
+        satisfy) cmd_satisfy "$@" ;;
+        indextargets) cmd_indextargets "$@" ;;
+        changelog) cmd_changelog "$@" ;;
+        madison) cmd_madison "$@" ;;
+        audit) cmd_audit "$@" ;;
+        options) cmd_options "$@" ;;
+        make) cmd_make "$@" ;;
         clean) cmd_clean "$@" ;;
         autoclean) cmd_autoclean "$@" ;;
         check) cmd_check "$@" ;;
@@ -1132,6 +1216,7 @@ main() {
     load_config_file "${HOME:-/nonexistent}/.config/adam/config" || true
     parse_args "$@"
     config_default
+    normalize_paths
     ensure_state
     dispatch ${ADAM_ARGS}
     db_build_snapshot
