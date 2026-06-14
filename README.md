@@ -108,7 +108,7 @@ Common commands:
 
 ## Source-first Model
 
-`adam install PKG` resolves the package in pkgsrc, creates a dependency plan, and runs the pkgsrc install target in dependency order.
+`adam install PKG` resolves the package in pkgsrc, creates a dependency plan, and runs the pkgsrc install target in dependency order. Requested packages are recorded as manual; dependencies installed by Adam are recorded as automatic so conservative `autoremove` can clean them later when they become orphaned.
 
 Use binary mode explicitly:
 
@@ -138,7 +138,7 @@ Run:
 sh tests/run.sh
 ```
 
-The test suite uses fake tools and a fake pkgsrc tree. It covers every current public Adam command, including placeholder commands and failure paths.
+The test suite uses fake tools and a fake pkgsrc tree. It covers every current public Adam command and failure paths.
 
 CI runs the fake-tool suite on Ubuntu and macOS, then runs the same suite inside the real pkgsrc integration script. The integration jobs download stable pkgsrc and build `misc/figlet` from source on Linux, macOS, NetBSD, and OpenBSD on every push and pull request. Linux and macOS use unprivileged pkgsrc bootstrap under the runner temp directory; NetBSD uses the native pkgsrc toolchain; OpenBSD bootstraps privileged pkgsrc under `/usr/pkg`.
 
