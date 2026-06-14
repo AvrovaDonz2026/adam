@@ -65,6 +65,27 @@ Download package artifacts when supported.
 ### `adam build-dep PKG...`
 Build package dependencies.
 
+### `adam satisfy EXPR...`
+Install packages that satisfy dependency expressions.
+
+### `adam indextargets`
+List Adam index locations.
+
+### `adam changelog PKG`
+Search pkgsrc changelog entries for a package name.
+
+### `adam madison PKG...`
+Show source version information for packages.
+
+### `adam audit`
+Run pkgsrc audit when `pkg_admin` is available.
+
+### `adam options PKG`
+Show pkgsrc options for a package.
+
+### `adam make PKG TARGET...`
+Run a pkgsrc make target in a package directory.
+
 ### `adam clean`
 Remove local scratch data.
 
