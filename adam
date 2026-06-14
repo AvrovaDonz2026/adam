@@ -1,0 +1,1028 @@
+#!/bin/sh
+
+set -eu
+
+ADAM_VERSION="0.1.0"
+
+umask 022
+
+ADAM_CMD_NAME="adam"
+ADAM_SOURCE_ONLY=0
+ADAM_BINARY_MODE=0
+ADAM_DRY_RUN=0
+ADAM_ASSUME_YES=0
+ADAM_REBUILD_DEPS=0
+ADAM_IGNORE_HOLD=0
+ADAM_VERBOSE=0
+ADAM_CONFIG_FILE=""
+ADAM_DB_PATH=""
+ADAM_PKGSRCDIR=""
+ADAM_MAKE_CMD=""
+ADAM_ROOT_CMD=""
+ADAM_PKGIN_CMD=""
+ADAM_STATE_DIR=""
+ADAM_LOCALBASE=""
+
+log() {
+    printf '%s\n' "$*" >&2
+}
+
+vlog() {
+    if [ "$ADAM_VERBOSE" -eq 1 ]; then
+        log "$@"
+    fi
+}
+
+die() {
+    log "${ADAM_CMD_NAME}: $*"
+    exit 1
+}
+
+need_cmd() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        die "required command not found: $1"
+    fi
+}
+
+sanitize_field() {
+    printf '%s' "$1" | tr '\t\r\n' '   '
+}
+
+ts_now() {
+    date '+%Y-%m-%dT%H:%M:%S%z'
+}
+
+file_mkdir_p() {
+    if [ ! -d "$1" ]; then
+        mkdir -p "$1"
+    fi
+}
+
+config_default() {
+    : "${ADAM_PKGSRCDIR:=/usr/pkgsrc}"
+    : "${ADAM_LOCALBASE:=/usr/pkg}"
+    : "${ADAM_STATE_DIR:=${ADAM_LOCALBASE}/var/db/adam}"
+    : "${ADAM_DB_PATH:=${ADAM_STATE_DIR}/adam-pkg.db}"
+    : "${ADAM_MAKE_CMD:=}"
+    : "${ADAM_ROOT_CMD:=auto}"
+    : "${ADAM_PKGIN_CMD:=pkgin}"
+}
+
+load_config_file() {
+    cfg="$1"
+    [ -f "$cfg" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+            ''|'#'*) continue ;;
+        esac
+        case "$line" in
+            *=*)
+                key=${line%%=*}
+                val=${line#*=}
+                case "$key" in
+                    ADAM_PKGSRCDIR) ADAM_PKGSRCDIR=$val ;;
+                    ADAM_LOCALBASE) ADAM_LOCALBASE=$val ;;
+                    ADAM_STATE_DIR) ADAM_STATE_DIR=$val ;;
+                    ADAM_DB_PATH) ADAM_DB_PATH=$val ;;
+                    ADAM_MAKE_CMD) ADAM_MAKE_CMD=$val ;;
+                    ADAM_ROOT_CMD) ADAM_ROOT_CMD=$val ;;
+                    ADAM_PKGIN_CMD) ADAM_PKGIN_CMD=$val ;;
+                    ADAM_SOURCE_ONLY) ADAM_SOURCE_ONLY=$val ;;
+                    ADAM_BINARY_MODE) ADAM_BINARY_MODE=$val ;;
+                    ADAM_REBUILD_DEPS) ADAM_REBUILD_DEPS=$val ;;
+                    ADAM_IGNORE_HOLD) ADAM_IGNORE_HOLD=$val ;;
+                    ADAM_DRY_RUN) ADAM_DRY_RUN=$val ;;
+                    ADAM_ASSUME_YES) ADAM_ASSUME_YES=$val ;;
+                esac
+                ;;
+        esac
+    done < "$cfg"
+}
+
+boolize() {
+    case "$1" in
+        1|yes|YES|true|TRUE|on|ON) printf '1' ;;
+        *) printf '0' ;;
+    esac
+}
+
+parse_args() {
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            -y|--yes) ADAM_ASSUME_YES=1 ;;
+            -n|--dry-run) ADAM_DRY_RUN=1 ;;
+            -v|--verbose) ADAM_VERBOSE=1 ;;
+            --source-only) ADAM_SOURCE_ONLY=1 ;;
+            --binary) ADAM_BINARY_MODE=1 ;;
+            --no-source-fallback) ADAM_SOURCE_ONLY=1 ;;
+            --rebuild-deps) ADAM_REBUILD_DEPS=1 ;;
+            --ignore-hold) ADAM_IGNORE_HOLD=1 ;;
+            --pkgsrc)
+                shift
+                [ "$#" -gt 0 ] || die "--pkgsrc requires a value"
+                ADAM_PKGSRCDIR=$1
+                ;;
+            --db)
+                shift
+                [ "$#" -gt 0 ] || die "--db requires a value"
+                ADAM_DB_PATH=$1
+                ADAM_STATE_DIR=$(dirname "$ADAM_DB_PATH")
+                ;;
+            --make)
+                shift
+                [ "$#" -gt 0 ] || die "--make requires a value"
+                ADAM_MAKE_CMD=$1
+                ;;
+            --root-cmd)
+                shift
+                [ "$#" -gt 0 ] || die "--root-cmd requires a value"
+                ADAM_ROOT_CMD=$1
+                ;;
+            --pkgin-cmd)
+                shift
+                [ "$#" -gt 0 ] || die "--pkgin-cmd requires a value"
+                ADAM_PKGIN_CMD=$1
+                ;;
+            --config)
+                shift
+                [ "$#" -gt 0 ] || die "--config requires a value"
+                ADAM_CONFIG_FILE=$1
+                ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            --version)
+                printf '%s %s\n' "$ADAM_CMD_NAME" "$ADAM_VERSION"
+                exit 0
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -*)
+                die "unknown option: $1"
+                ;;
+            *)
+                break
+                ;;
+        esac
+        shift
+    done
+    ADAM_ARGS="$*"
+}
+
+show_help() {
+    cat <<'EOF'
+adam: source-first pkgsrc package manager with apt-family commands
+
+Usage:
+  adam [options] <command> [args...]
+
+Core commands:
+  update, install, remove, purge, upgrade, full-upgrade, autoremove
+  search, show, list, depends, rdepends, policy, mark
+  build, plan, source, download, build-dep, clean, autoclean
+  check, doctor, stats, dumpavail, pkgnames
+
+Options:
+  -y, --yes             assume yes
+  -n, --dry-run         print actions only
+  -v, --verbose         verbose logging
+      --binary          use pkgin backend when available
+      --source-only     force pkgsrc build path
+      --no-source-fallback
+      --rebuild-deps
+      --ignore-hold
+      --pkgsrc DIR
+      --db PATH
+      --make CMD
+      --root-cmd CMD
+      --pkgin-cmd CMD
+      --config FILE
+EOF
+}
+
+cmdv() {
+    if [ -n "$1" ]; then
+        printf '%s' "$1"
+    else
+        command -v "$2"
+    fi
+}
+
+state_lock_dir="${TMPDIR:-/tmp}/adam.lock"
+LOCK_HELD=0
+
+lock_acquire() {
+    while ! mkdir "$state_lock_dir" 2>/dev/null; do
+        sleep 1
+    done
+    LOCK_HELD=1
+}
+
+lock_release() {
+    if [ "$LOCK_HELD" -eq 1 ]; then
+        rmdir "$state_lock_dir" 2>/dev/null || true
+        LOCK_HELD=0
+    fi
+}
+
+trap lock_release EXIT INT TERM HUP
+
+ensure_state() {
+    file_mkdir_p "$ADAM_STATE_DIR"
+    file_mkdir_p "${ADAM_STATE_DIR}/tables"
+    [ -f "${ADAM_STATE_DIR}/tables/installed.tsv" ] || : > "${ADAM_STATE_DIR}/tables/installed.tsv"
+    [ -f "${ADAM_STATE_DIR}/tables/available.tsv" ] || : > "${ADAM_STATE_DIR}/tables/available.tsv"
+    [ -f "${ADAM_STATE_DIR}/tables/marks.tsv" ] || : > "${ADAM_STATE_DIR}/tables/marks.tsv"
+    [ -f "${ADAM_STATE_DIR}/tables/transactions.tsv" ] || : > "${ADAM_STATE_DIR}/tables/transactions.tsv"
+    [ -f "${ADAM_STATE_DIR}/tables/config.tsv" ] || : > "${ADAM_STATE_DIR}/tables/config.tsv"
+    [ -f "${ADAM_STATE_DIR}/tables/files.tsv" ] || : > "${ADAM_STATE_DIR}/tables/files.tsv"
+    touch "$ADAM_DB_PATH"
+}
+
+table_path() {
+    printf '%s/tables/%s.tsv' "$ADAM_STATE_DIR" "$1"
+}
+
+table_append() {
+    printf '%s\n' "$2" >> "$(table_path "$1")"
+}
+
+table_write() {
+    tmp="${1}.tmp.$$"
+    shift
+    : > "$tmp"
+    cat > "$tmp"
+    mv "$tmp" "$1"
+}
+
+snapshot_db() {
+    tmp="${ADAM_DB_PATH}.tmp.$$"
+    {
+        printf '[meta]\n'
+        printf 'schema_version\t1\n'
+        printf 'updated_at\t%s\n\n' "$(ts_now)"
+
+        printf '[packages]\n'
+        [ -f "$(table_path installed)" ] && cat "$(table_path installed)"
+        printf '\n[available]\n'
+        [ -f "$(table_path available)" ] && cat "$(table_path available)"
+        printf '\n[marks]\n'
+        [ -f "$(table_path marks)" ] && cat "$(table_path marks)"
+        printf '\n[transactions]\n'
+        [ -f "$(table_path transactions)" ] && cat "$(table_path transactions)"
+        printf '\n[config]\n'
+        [ -f "$(table_path config)" ] && cat "$(table_path config)"
+        printf '\n[files]\n'
+        [ -f "$(table_path files)" ] && cat "$(table_path files)"
+        printf '\n'
+    } > "$tmp"
+    mv "$tmp" "$ADAM_DB_PATH"
+}
+
+now_id() {
+    date '+%s'
+}
+
+pkgsrc_make() {
+    if [ -n "$ADAM_MAKE_CMD" ]; then
+        printf '%s' "$ADAM_MAKE_CMD"
+    else
+        if command -v bmake >/dev/null 2>&1; then
+            printf '%s' "bmake"
+        else
+            printf '%s' "make"
+        fi
+    fi
+}
+
+run_cmd() {
+    if [ "$ADAM_DRY_RUN" -eq 1 ]; then
+        printf '+ %s\n' "$*"
+        return 0
+    fi
+    sh -c "$*"
+}
+
+root_prefix() {
+    case "$ADAM_ROOT_CMD" in
+        auto)
+            if [ "$(id -u)" -eq 0 ]; then
+                printf ''
+            elif command -v doas >/dev/null 2>&1; then
+                printf 'doas'
+            elif command -v sudo >/dev/null 2>&1; then
+                printf 'sudo'
+            else
+                printf 'su -c'
+            fi
+            ;;
+        none|'')
+            printf ''
+            ;;
+        *)
+            printf '%s' "$ADAM_ROOT_CMD"
+            ;;
+    esac
+}
+
+run_as_root() {
+    prefix=$(root_prefix)
+    if [ -z "$prefix" ]; then
+        run_cmd "$*"
+    else
+        run_cmd "$prefix $*"
+    fi
+}
+
+ensure_pkgsrc_tree() {
+    [ -d "$ADAM_PKGSRCDIR" ] || die "pkgsrc tree not found: $ADAM_PKGSRCDIR"
+}
+
+pkgpath_to_abspath() {
+    printf '%s/%s' "$ADAM_PKGSRCDIR" "$1"
+}
+
+is_pkgpath() {
+    case "$1" in
+        */*) [ -d "$(pkgpath_to_abspath "$1")" ] ;;
+        *) return 1 ;;
+    esac
+}
+
+sanitize_pkgpath() {
+    printf '%s' "$1" | sed 's#^\./##; s#^//##'
+}
+
+pkgsrc_index_tmp="${TMPDIR:-/tmp}/adam-index.$$"
+
+collect_pkg_metadata() {
+    pkgpath="$1"
+    pkgdir="$(pkgpath_to_abspath "$pkgpath")"
+    [ -d "$pkgdir" ] || return 0
+    makecmd=$(pkgsrc_make)
+    (
+        cd "$pkgdir"
+        pkgname=$($makecmd -V PKGNAME 2>/dev/null || true)
+        pkgbase=$($makecmd -V PKGBASE 2>/dev/null || true)
+        comment=$($makecmd -V COMMENT 2>/dev/null || true)
+        license=$($makecmd -V LICENSE 2>/dev/null || true)
+        categories=$($makecmd -V CATEGORIES 2>/dev/null || true)
+        build_depends=$($makecmd -V BUILD_DEPENDS 2>/dev/null || true)
+        run_depends=$($makecmd -V RUN_DEPENDS 2>/dev/null || true)
+        version=${pkgname#${pkgbase}-}
+        [ "$pkgname" = "$version" ] && version=$pkgname
+        build_paths=$(printf '%s\n' "$build_depends" | awk -F: 'NF>1 {print $NF}' | sed '/^$/d' | while IFS= read -r dep; do
+            dep_path=$(cd "$pkgdir" && cd "$dep" 2>/dev/null && pwd || true)
+            if [ -n "$dep_path" ]; then
+                printf '%s\n' "${dep_path#${ADAM_PKGSRCDIR}/}"
+            fi
+        done | awk 'NF { if (n++) printf "|"; printf "%s", $0 }')
+        run_paths=$(printf '%s\n' "$run_depends" | awk -F: 'NF>1 {print $NF}' | sed '/^$/d' | while IFS= read -r dep; do
+            dep_path=$(cd "$pkgdir" && cd "$dep" 2>/dev/null && pwd || true)
+            if [ -n "$dep_path" ]; then
+                printf '%s\n' "${dep_path#${ADAM_PKGSRCDIR}/}"
+            fi
+        done | awk 'NF { if (n++) printf "|"; printf "%s", $0 }')
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$(sanitize_field "${pkgbase:-$pkgpath}")" \
+            "$(sanitize_field "${pkgname:-$pkgbase}")" \
+            "$(sanitize_field "$pkgpath")" \
+            "$(sanitize_field "${version:-}")" \
+            "$(sanitize_field "${comment:-}")" \
+            "$(sanitize_field "${license:-}")" \
+            "$(sanitize_field "${categories:-}")" \
+            "$(sanitize_field "${build_paths:-}")" \
+            "$(sanitize_field "${run_paths:-}")"
+    )
+}
+
+pkgsrc_scan_index() {
+    ensure_pkgsrc_tree
+    : > "$pkgsrc_index_tmp"
+    find "$ADAM_PKGSRCDIR" -mindepth 3 -maxdepth 3 -type f -name Makefile | while IFS= read -r mf; do
+        pkgdir=$(dirname "$mf")
+        pkgpath=${pkgdir#${ADAM_PKGSRCDIR}/}
+        collect_pkg_metadata "$pkgpath" >> "$pkgsrc_index_tmp" || true
+    done
+}
+
+db_refresh_index() {
+    lock_acquire
+    pkgsrc_scan_index
+    mv "$pkgsrc_index_tmp" "$(table_path available)"
+    snapshot_db
+    lock_release
+}
+
+db_set_mark() {
+    pkgbase="$1"
+    mark="$2"
+    tmp="${ADAM_STATE_DIR}/tables/marks.tsv.tmp.$$"
+    awk -F '\t' -v p="$pkgbase" -v m="$mark" '
+        BEGIN { OFS = "\t"; found = 0 }
+        $1 == p { print p, m; found = 1; next }
+        { print }
+        END { if (!found) print p, m }
+    ' "$(table_path marks)" > "$tmp"
+    mv "$tmp" "$(table_path marks)"
+}
+
+db_upsert_installed() {
+    pkgbase="$1"
+    pkgname="$2"
+    pkgpath="$3"
+    version="$4"
+    status="$5"
+    origin="$6"
+    automatic="$7"
+    hold="$8"
+    installed_at="$9"
+    updated_at="${10}"
+    tmp="${ADAM_STATE_DIR}/tables/installed.tsv.tmp.$$"
+    awk -F '\t' -v OFS='\t' \
+        -v a="$pkgbase" -v b="$pkgname" -v c="$pkgpath" -v d="$version" \
+        -v e="$status" -v f="$origin" -v g="$automatic" -v h="$hold" \
+        -v i="$installed_at" -v j="$updated_at" '
+        $1 == a { print a,b,c,d,e,f,g,h,i,j; found=1; next }
+        { print }
+        END { if (!found) print a,b,c,d,e,f,g,h,i,j }
+    ' "$(table_path installed)" > "$tmp"
+    mv "$tmp" "$(table_path installed)"
+}
+
+db_remove_installed() {
+    pkgbase="$1"
+    tmp="${ADAM_STATE_DIR}/tables/installed.tsv.tmp.$$"
+    awk -F '\t' -v p="$pkgbase" '$1 != p' "$(table_path installed)" > "$tmp"
+    mv "$tmp" "$(table_path installed)"
+}
+
+db_add_transaction() {
+    id=$1
+    action=$2
+    packages=$3
+    status=$4
+    log_path=$5
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$(ts_now)" "$action" "$packages" "$status" "$log_path" >> "$(table_path transactions)"
+}
+
+db_add_config() {
+    key=$1
+    val=$2
+    tmp="${ADAM_STATE_DIR}/tables/config.tsv.tmp.$$"
+    awk -F '\t' -v OFS='\t' -v k="$key" -v v="$val" '
+        $1 == k { print k, v; found=1; next }
+        { print }
+        END { if (!found) print k, v }
+    ' "$(table_path config)" > "$tmp"
+    mv "$tmp" "$(table_path config)"
+}
+
+db_set_file_record() {
+    printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$(table_path files)"
+}
+
+db_lookup_available() {
+    key="$1"
+    awk -F '\t' -v p="$key" '$1 == p || $2 == p || $3 == p { print; exit }' "$(table_path available)"
+}
+
+db_lookup_installed() {
+    key="$1"
+    awk -F '\t' -v p="$key" '$1 == p || $2 == p || $3 == p { print; exit }' "$(table_path installed)"
+}
+
+db_list_installed() {
+    cat "$(table_path installed)"
+}
+
+db_list_available() {
+    cat "$(table_path available)"
+}
+
+db_list_marks() {
+    cat "$(table_path marks)"
+}
+
+db_build_snapshot() {
+    snapshot_db
+}
+
+pkg_info_installed_names() {
+    if command -v pkg_info >/dev/null 2>&1; then
+        pkg_info 2>/dev/null | awk '{print $1}'
+    fi
+}
+
+db_check_drift() {
+    if ! command -v pkg_info >/dev/null 2>&1; then
+        printf 'pkg_info unavailable; cannot compare against system db\n'
+        return 0
+    fi
+    sys_file="${ADAM_STATE_DIR}/pkg_info.$$"
+    adam_file="${ADAM_STATE_DIR}/adam_info.$$"
+    pkg_info_installed_names | sort > "$sys_file"
+    awk -F '\t' '{print $2}' "$(table_path installed)" | sort > "$adam_file"
+    diff_lines=$(comm -3 "$adam_file" "$sys_file" 2>/dev/null || true)
+    rm -f "$sys_file" "$adam_file"
+    if [ -n "$diff_lines" ]; then
+        printf '%s\n' "$diff_lines"
+        return 1
+    fi
+    printf 'ok\n'
+}
+
+resolve_pkgpath_from_name() {
+    name="$1"
+    ensure_state
+    if is_pkgpath "$name"; then
+        printf '%s\n' "$name"
+        return 0
+    fi
+    awk -F '\t' -v n="$name" '
+        $1 == n || $2 == n || $2 ~ ("^" n "-") {
+            print $3
+            found = 1
+            exit
+        }
+    ' "$(table_path available)"
+}
+
+resolve_pkgmeta() {
+    pkgpath="$1"
+    line=$(db_lookup_available "$pkgpath" || true)
+    if [ -n "$line" ]; then
+        printf '%s\n' "$line"
+        return 0
+    fi
+    collect_pkg_metadata "$pkgpath"
+}
+
+pkgmeta_field() {
+    line="$1"
+    field="$2"
+    printf '%s\n' "$line" | awk -F '\t' -v n="$field" '{print $n}'
+}
+
+dep_paths_from_field() {
+    field="$1"
+    printf '%s\n' "$field" | tr '|' '\n' | sed '/^$/d'
+}
+
+visited_add() {
+    printf '%s\n' "$1" >> "$VISITED_FILE"
+}
+
+visited_has() {
+    if grep -Fxq "$1" "$VISITED_FILE" 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+plan_dep_tree() {
+    (
+        target="$1"
+        resolved="$(resolve_pkgpath_from_name "$target")"
+        [ -n "$resolved" ] || die "unable to resolve package: $target"
+        pkgmeta=$(resolve_pkgmeta "$resolved")
+        pkgpath=$(pkgmeta_field "$pkgmeta" 3)
+        if visited_has "$pkgpath"; then
+            exit 0
+        fi
+        visited_add "$pkgpath"
+        build_deps=$(pkgmeta_field "$pkgmeta" 8)
+        run_deps=$(pkgmeta_field "$pkgmeta" 9)
+        for dep in $(dep_paths_from_field "$build_deps"); do
+            if [ -n "$dep" ] && [ -d "$(pkgpath_to_abspath "$dep")" ]; then
+                plan_dep_tree "$dep"
+            fi
+        done
+        for dep in $(dep_paths_from_field "$run_deps"); do
+            if [ -n "$dep" ] && [ -d "$(pkgpath_to_abspath "$dep")" ]; then
+                plan_dep_tree "$dep"
+            fi
+        done
+        printf '%s\n' "$resolved" >> "$PLAN_FILE"
+    )
+}
+
+pkg_mark_status() {
+    pkgbase="$1"
+    status="$2"
+    if [ -f "$(table_path marks)" ]; then
+        awk -F '\t' -v p="$pkgbase" '$1 == p { print $2; exit }' "$(table_path marks)"
+    fi
+}
+
+pkg_is_held() {
+    hold=$(awk -F '\t' -v p="$1" '$1 == p { print $2; exit }' "$(table_path marks)" 2>/dev/null || true)
+    [ "$hold" = "hold" ]
+}
+
+ensure_not_held() {
+    if [ "$ADAM_IGNORE_HOLD" -eq 1 ]; then
+        return 0
+    fi
+    if pkg_is_held "$1"; then
+        die "package is on hold: $1"
+    fi
+}
+
+record_install() {
+    pkgmeta="$1"
+    pkgbase=$(pkgmeta_field "$pkgmeta" 1)
+    pkgname=$(pkgmeta_field "$pkgmeta" 2)
+    pkgpath=$(pkgmeta_field "$pkgmeta" 3)
+    version=$(pkgmeta_field "$pkgmeta" 4)
+    origin=$2
+    automatic=$3
+    hold=$(awk -F '\t' -v p="$pkgbase" '$1 == p { print $2; exit }' "$(table_path marks)" 2>/dev/null || true)
+    [ "$hold" = "hold" ] || hold=""
+    db_upsert_installed "$pkgbase" "$pkgname" "$pkgpath" "$version" "installed" "$origin" "$automatic" "$hold" "$(ts_now)" "$(ts_now)"
+}
+
+maybe_run_pkgin() {
+    return 1
+}
+
+pkgsrc_install_pkgpath() {
+    pkgpath="$1"
+    ensure_pkgsrc_tree
+    pkgdir=$(pkgpath_to_abspath "$pkgpath")
+    [ -d "$pkgdir" ] || die "missing pkgsrc path: $pkgpath"
+    meta=$(collect_pkg_metadata "$pkgpath")
+    pkgbase=$(pkgmeta_field "$meta" 1)
+    ensure_not_held "$pkgbase"
+    makecmd=$(pkgsrc_make)
+    cmd="cd '$pkgdir' && $makecmd install"
+    if [ "$ADAM_DRY_RUN" -eq 1 ]; then
+        printf '+ %s\n' "$cmd"
+        return 0
+    fi
+    if [ "$(id -u)" -eq 0 ] || [ "$(root_prefix)" = "" ]; then
+        sh -c "$cmd"
+    else
+        run_as_root "sh -c $(printf %s "$cmd" | sed "s/'/'\\\\''/g;1s/^/'/;\$s/\$/'/")"
+    fi
+    record_install "$meta" "source" "0"
+}
+
+build_pkgpath() {
+    pkgpath="$1"
+    ensure_pkgsrc_tree
+    pkgdir=$(pkgpath_to_abspath "$pkgpath")
+    [ -d "$pkgdir" ] || die "missing pkgsrc path: $pkgpath"
+    makecmd=$(pkgsrc_make)
+    cmd="cd '$pkgdir' && $makecmd package"
+    if [ "$ADAM_DRY_RUN" -eq 1 ]; then
+        printf '+ %s\n' "$cmd"
+        return 0
+    fi
+    sh -c "$cmd"
+}
+
+plan_install_targets() {
+    PLAN_FILE="${ADAM_STATE_DIR}/plan.$$"
+    VISITED_FILE="${ADAM_STATE_DIR}/visited.$$"
+    : > "$PLAN_FILE"
+    : > "$VISITED_FILE"
+    for target in "$@"; do
+        plan_dep_tree "$target"
+    done
+    awk '!seen[$0]++' "$PLAN_FILE" > "${PLAN_FILE}.tmp"
+    mv "${PLAN_FILE}.tmp" "$PLAN_FILE"
+    rm -f "$VISITED_FILE"
+}
+
+cmd_update() {
+    if [ "$ADAM_BINARY_MODE" -eq 1 ] && maybe_run_pkgin update; then
+        :
+    fi
+    db_refresh_index
+    printf 'updated\n'
+}
+
+cmd_install() {
+    if [ "$#" -eq 0 ]; then
+        die "install requires at least one package"
+    fi
+    if maybe_run_pkgin install "$*"; then
+        return 0
+    fi
+    plan_install_targets "$@"
+    while IFS= read -r target; do
+        [ -n "$target" ] || continue
+        pkgsrc_install_pkgpath "$target"
+        txid=$(now_id)
+        db_add_transaction "$txid" install "$target" ok "-"
+    done < "$PLAN_FILE"
+    rm -f "$PLAN_FILE"
+    db_build_snapshot
+    printf 'installed\n'
+}
+
+cmd_build() {
+    if [ "$#" -eq 0 ]; then
+        die "build requires at least one package"
+    fi
+    plan_install_targets "$@"
+    while IFS= read -r target; do
+        [ -n "$target" ] || continue
+        build_pkgpath "$target"
+        txid=$(now_id)
+        db_add_transaction "$txid" build "$target" ok "-"
+    done < "$PLAN_FILE"
+    rm -f "$PLAN_FILE"
+    db_build_snapshot
+    printf 'built\n'
+}
+
+cmd_remove() {
+    [ "$#" -gt 0 ] || die "remove requires at least one package"
+    for pkg in "$@"; do
+        ensure_not_held "$pkg"
+        if [ "$ADAM_BINARY_MODE" -eq 1 ] && maybe_run_pkgin remove "$pkg"; then
+            :
+        else
+            run_as_root "pkg_delete '$pkg'" || true
+        fi
+        db_remove_installed "$pkg"
+        db_add_transaction "$(now_id)" remove "$pkg" ok "-"
+    done
+    db_build_snapshot
+    printf 'removed\n'
+}
+
+cmd_upgrade() {
+    if [ "$ADAM_BINARY_MODE" -eq 1 ] && maybe_run_pkgin upgrade; then
+        return 0
+    fi
+    updated=0
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        pkgbase=$(printf '%s\n' "$line" | awk -F '\t' '{print $1}')
+        pkgpath=$(printf '%s\n' "$line" | awk -F '\t' '{print $3}')
+        ensure_not_held "$pkgbase"
+        pkgsrc_install_pkgpath "$pkgpath"
+        db_add_transaction "$(now_id)" upgrade "$pkgbase" ok "-"
+        updated=1
+    done <<EOF
+$(db_list_installed)
+EOF
+    db_build_snapshot
+    [ "$updated" -eq 1 ] && printf 'upgraded\n' || printf 'nothing to do\n'
+}
+
+cmd_full_upgrade() {
+    cmd_upgrade "$@"
+}
+
+cmd_autoremove() {
+    if [ "$ADAM_BINARY_MODE" -eq 1 ] && maybe_run_pkgin autoremove; then
+        return 0
+    fi
+    printf 'autoremove not fully implemented yet\n'
+}
+
+cmd_search() {
+    [ "$#" -gt 0 ] || die "search requires a pattern"
+    pat="$1"
+    awk -F '\t' -v p="$pat" '
+        $1 ~ p || $2 ~ p || $4 ~ p || $5 ~ p || $7 ~ p {
+            printf "%s\t%s\t%s\t%s\n", $1, $2, $3, $4
+        }
+    ' "$(table_path available)"
+}
+
+cmd_show() {
+    [ "$#" -gt 0 ] || die "show requires a package"
+    for arg in "$@"; do
+        pkgpath=$(resolve_pkgpath_from_name "$arg")
+        [ -n "$pkgpath" ] || die "unknown package: $arg"
+        line=$(db_lookup_available "$pkgpath")
+        [ -n "$line" ] || line=$(collect_pkg_metadata "$pkgpath")
+        printf 'Package: %s\n' "$(pkgmeta_field "$line" 2)"
+        printf 'Path: %s\n' "$(pkgmeta_field "$line" 3)"
+        printf 'Version: %s\n' "$(pkgmeta_field "$line" 4)"
+        printf 'Comment: %s\n' "$(pkgmeta_field "$line" 5)"
+        printf 'License: %s\n' "$(pkgmeta_field "$line" 6)"
+        printf 'Categories: %s\n' "$(pkgmeta_field "$line" 7)"
+        printf '\n'
+    done
+}
+
+cmd_list() {
+    mode="installed"
+    for arg in "$@"; do
+        case "$arg" in
+            --installed) mode="installed" ;;
+            --all-versions) mode="available" ;;
+            --upgradeable) mode="upgradeable" ;;
+        esac
+    done
+    case "$mode" in
+        installed) db_list_installed ;;
+        available) db_list_available ;;
+        upgradeable)
+            awk -F '\t' '
+                NR==FNR { a[$1]=$4; next }
+                $1 in a && a[$1] != $4 { print $1, a[$1], $4 }
+            ' "$(table_path installed)" "$(table_path available)"
+            ;;
+    esac
+}
+
+cmd_depends() {
+    [ "$#" -gt 0 ] || die "depends requires a package"
+    pkgpath=$(resolve_pkgpath_from_name "$1")
+    line=$(db_lookup_available "$pkgpath")
+    [ -n "$line" ] || line=$(collect_pkg_metadata "$pkgpath")
+    dep_paths_from_field "$(pkgmeta_field "$line" 8)"
+    dep_paths_from_field "$(pkgmeta_field "$line" 9)"
+}
+
+cmd_rdepends() {
+    [ "$#" -gt 0 ] || die "rdepends requires a package"
+    target=$(resolve_pkgpath_from_name "$1")
+    awk -F '\t' -v p="$target" '
+        index($8, p) || index($9, p) { print $3 }
+    ' "$(table_path available)"
+}
+
+cmd_policy() {
+    [ "$#" -gt 0 ] || die "policy requires a package"
+    pkgpath=$(resolve_pkgpath_from_name "$1")
+    line=$(db_lookup_available "$pkgpath")
+    inst=$(db_lookup_installed "$(pkgmeta_field "$line" 1)")
+    printf 'Package: %s\n' "$(pkgmeta_field "$line" 2)"
+    printf 'Candidate: %s\n' "$(pkgmeta_field "$line" 4)"
+    if [ -n "$inst" ]; then
+        printf 'Installed: %s\n' "$(pkgmeta_field "$inst" 4)"
+    else
+        printf 'Installed: (none)\n'
+    fi
+    printf 'Path: %s\n' "$(pkgmeta_field "$line" 3)"
+}
+
+cmd_mark() {
+    [ "$#" -ge 2 ] || die "mark requires a subcommand and packages"
+    sub="$1"
+    shift
+    case "$sub" in
+        manual|auto|hold|unhold)
+            for pkg in "$@"; do
+                pkgpath=$(resolve_pkgpath_from_name "$pkg")
+                line=$(db_lookup_available "$pkgpath")
+                pkgbase=$(pkgmeta_field "$line" 1)
+                case "$sub" in
+                    unhold) db_set_mark "$pkgbase" "" ;;
+                    *) db_set_mark "$pkgbase" "$sub" ;;
+                esac
+            done
+            db_build_snapshot
+            ;;
+        showmanual|showauto|showhold)
+            awk -F '\t' -v m="${sub#show}" '$2 == m { print $1 }' "$(table_path marks)"
+            ;;
+        minimize-manual)
+            printf 'minimize-manual not yet implemented\n'
+            ;;
+        *)
+            die "unknown mark subcommand: $sub"
+            ;;
+    esac
+}
+
+cmd_source() {
+    [ "$#" -gt 0 ] || die "source requires a package"
+    for pkg in "$@"; do
+        pkgpath=$(resolve_pkgpath_from_name "$pkg")
+        dir=$(pkgpath_to_abspath "$pkgpath")
+        [ -d "$dir" ] || die "missing source directory: $pkgpath"
+        printf '%s\n' "$dir"
+    done
+}
+
+cmd_download() {
+    [ "$#" -gt 0 ] || die "download requires a package"
+    if [ "$ADAM_BINARY_MODE" -eq 1 ] && maybe_run_pkgin download "$*"; then
+        return 0
+    fi
+    printf 'download not fully implemented yet\n'
+}
+
+cmd_build_dep() {
+    [ "$#" -gt 0 ] || die "build-dep requires a package"
+    for pkg in "$@"; do
+        printf '%s\n' "$(cmd_depends "$pkg")"
+    done
+}
+
+cmd_clean() {
+    rm -f "${ADAM_STATE_DIR}/plan."*
+    printf 'cleaned\n'
+}
+
+cmd_autoclean() {
+    printf 'autoclean not fully implemented yet\n'
+}
+
+cmd_check() {
+    if [ "${1:-}" = "--repair" ]; then
+        db_refresh_index
+        printf 'repaired\n'
+        return 0
+    fi
+    db_check_drift
+}
+
+cmd_doctor() {
+    ensure_state
+    ensure_pkgsrc_tree || true
+    printf 'state dir: %s\n' "$ADAM_STATE_DIR"
+    printf 'db file: %s\n' "$ADAM_DB_PATH"
+    printf 'pkgsrc: %s\n' "$ADAM_PKGSRCDIR"
+    if command -v "$ADAM_PKGIN_CMD" >/dev/null 2>&1; then
+        printf 'pkgin: available\n'
+    else
+        printf 'pkgin: missing\n'
+    fi
+}
+
+cmd_stats() {
+    printf 'installed\t'
+    wc -l < "$(table_path installed)" | tr -d ' '
+    printf 'available\t'
+    wc -l < "$(table_path available)" | tr -d ' '
+}
+
+cmd_dumpavail() {
+    db_list_available
+}
+
+cmd_pkgnames() {
+    prefix="${1:-}"
+    awk -F '\t' -v p="$prefix" '$2 ~ ("^" p) { print $2 }' "$(table_path available)"
+}
+
+cmd_edit_sources() {
+    printf 'edit-sources is not implemented yet\n'
+}
+
+dispatch() {
+    cmd="${1:-}"
+    [ -n "$cmd" ] || { show_help; exit 1; }
+    shift || true
+    case "$cmd" in
+        update) cmd_update "$@" ;;
+        install) cmd_install "$@" ;;
+        remove|rm) cmd_remove "$@" ;;
+        purge) cmd_remove "$@" ;;
+        upgrade) cmd_upgrade "$@" ;;
+        full-upgrade|dist-upgrade) cmd_full_upgrade "$@" ;;
+        autoremove) cmd_autoremove "$@" ;;
+        search) cmd_search "$@" ;;
+        show) cmd_show "$@" ;;
+        list) cmd_list "$@" ;;
+        depends) cmd_depends "$@" ;;
+        rdepends) cmd_rdepends "$@" ;;
+        policy) cmd_policy "$@" ;;
+        mark) cmd_mark "$@" ;;
+        build) cmd_build "$@" ;;
+        plan) plan_install_targets "$@" && cat "$PLAN_FILE" ;;
+        source) cmd_source "$@" ;;
+        download) cmd_download "$@" ;;
+        build-dep) cmd_build_dep "$@" ;;
+        clean) cmd_clean "$@" ;;
+        autoclean) cmd_autoclean "$@" ;;
+        check) cmd_check "$@" ;;
+        doctor) cmd_doctor "$@" ;;
+        stats) cmd_stats "$@" ;;
+        dumpavail) cmd_dumpavail "$@" ;;
+        pkgnames) cmd_pkgnames "$@" ;;
+        edit-sources) cmd_edit_sources "$@" ;;
+        *)
+            die "unknown command: $cmd"
+            ;;
+    esac
+}
+
+main() {
+    config_default
+    if [ -n "$ADAM_CONFIG_FILE" ]; then
+        load_config_file "$ADAM_CONFIG_FILE"
+    fi
+    load_config_file "/usr/pkg/etc/adam.conf" || true
+    load_config_file "${HOME:-/nonexistent}/.config/adam/config" || true
+    parse_args "$@"
+    config_default
+    ensure_state
+    dispatch ${ADAM_ARGS}
+    db_build_snapshot
+}
+
+main "$@"

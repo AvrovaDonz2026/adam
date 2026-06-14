@@ -1,0 +1,106 @@
+# Adam
+
+Adam is a source-first package manager front-end for pkgsrc, written in POSIX `sh`.
+
+It aims to provide an apt-style command surface while using pkgsrc as the primary package source.
+Binary package support through `pkgin` is available as an opt-in backend.
+
+## Design
+
+- Default install path: pkgsrc source builds.
+- Optional binary path: `--binary`.
+- No pbulk in v1.
+- English documentation and help text.
+- Authoritative state file: `adam-pkg.db`.
+
+## Quick Start
+
+```sh
+./adam update
+./adam install foo
+./adam --binary install foo
+./adam search foo
+./adam show foo
+```
+
+## Configuration
+
+Adam reads configuration in this order:
+
+1. Built-in defaults
+2. `/usr/pkg/etc/adam.conf`
+3. `~/.config/adam/config`
+4. Environment variables
+5. Command-line flags
+
+Example config:
+
+```sh
+ADAM_PKGSRCDIR=/usr/pkgsrc
+ADAM_LOCALBASE=/usr/pkg
+ADAM_STATE_DIR=/usr/pkg/var/db/adam
+ADAM_DB_PATH=/usr/pkg/var/db/adam/adam-pkg.db
+ADAM_ROOT_CMD=auto
+ADAM_MAKE_CMD=bmake
+ADAM_PKGIN_CMD=pkgin
+```
+
+## Package Database
+
+Adam stores state in a plain-text database named `adam-pkg.db`.
+
+Default location:
+
+```text
+/usr/pkg/var/db/adam/adam-pkg.db
+```
+
+The database tracks:
+
+- installed packages
+- available pkgsrc metadata
+- manual/auto/hold marks
+- transaction history
+- config values
+- file records
+
+Adam treats this database as its authoritative state for Adam-managed operations.
+
+## Commands
+
+Common commands:
+
+- `update`
+- `install`
+- `remove`
+- `purge`
+- `upgrade`
+- `full-upgrade`
+- `autoremove`
+- `search`
+- `show`
+- `list`
+- `depends`
+- `rdepends`
+- `policy`
+- `mark`
+- `build`
+- `plan`
+- `source`
+- `download`
+- `build-dep`
+- `clean`
+- `autoclean`
+- `check`
+- `doctor`
+
+## Testing
+
+Run:
+
+```sh
+sh tests/run.sh
+```
+
+The test suite uses fake tools and a fake pkgsrc tree.
+
