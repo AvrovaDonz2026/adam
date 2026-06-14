@@ -785,7 +785,38 @@ record_install() {
 }
 
 maybe_run_pkgin() {
-    return 1
+    action="$1"
+    shift
+    if [ "$ADAM_SOURCE_ONLY" -eq 1 ]; then
+        return 1
+    fi
+    if [ "$ADAM_BINARY_MODE" -ne 1 ]; then
+        return 1
+    fi
+    need_cmd "$ADAM_PKGIN_CMD"
+    case "$action" in
+        install)
+            run_as_root "$ADAM_PKGIN_CMD install $*"
+            ;;
+        update)
+            run_as_root "$ADAM_PKGIN_CMD update"
+            ;;
+        remove)
+            run_as_root "$ADAM_PKGIN_CMD remove $*"
+            ;;
+        upgrade)
+            run_as_root "$ADAM_PKGIN_CMD upgrade"
+            ;;
+        autoremove)
+            run_as_root "$ADAM_PKGIN_CMD autoremove"
+            ;;
+        download)
+            run_as_root "$ADAM_PKGIN_CMD download $*"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 pkgsrc_install_pkgpath() {
