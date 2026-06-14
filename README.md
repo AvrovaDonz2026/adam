@@ -138,9 +138,9 @@ Run:
 sh tests/run.sh
 ```
 
-The test suite uses fake tools and a fake pkgsrc tree.
+The test suite uses fake tools and a fake pkgsrc tree. It covers every current public Adam command, including placeholder commands and failure paths.
 
-CI runs this suite on Ubuntu, macOS, and NetBSD. The NetBSD job also downloads stable pkgsrc and checks Adam against the real `pkgtools/digest` metadata path. A real pkgsrc build job runs weekly or by manual workflow dispatch.
+CI runs this suite on Ubuntu, macOS, and NetBSD. The NetBSD jobs also download stable pkgsrc, check Adam against the real `pkgtools/digest` metadata path, and build `pkgtools/digest` on every push and pull request.
 
 ## More Documentation
 

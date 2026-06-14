@@ -8,17 +8,78 @@ WORK="${TMPDIR}/adam-test.$$"
 mkdir -p "$WORK"
 WORK=$(CDPATH= cd -- "$WORK" && pwd -P)
 BIN="$WORK/bin"
+NO_ADMIN_BIN="$WORK/no-admin-bin"
 PKGSRC="$WORK/pkgsrc"
 LINKED_PKGSRC="$WORK/linked-pkgsrc"
 STATE="$WORK/state"
+ALT_STATE="$WORK/alt-state"
 LOG="$WORK/commands.log"
+COVERED="$WORK/covered"
 
 cleanup() {
     rm -rf "$WORK"
 }
 trap cleanup EXIT INT TERM HUP
 
-mkdir -p "$BIN" "$PKGSRC/category/dep" "$PKGSRC/category/app" "$STATE"
+fail() {
+    echo "not ok - $1" >&2
+    exit 1
+}
+
+ok() {
+    echo "ok - $1"
+}
+
+cover() {
+    : > "$COVERED/$1"
+}
+
+assert_contains() {
+    file=$1
+    pattern=$2
+    name=$3
+    grep "$pattern" "$file" >/dev/null || fail "$name"
+}
+
+assert_not_contains() {
+    file=$1
+    pattern=$2
+    name=$3
+    if grep "$pattern" "$file" >/dev/null; then
+        fail "$name"
+    fi
+}
+
+assert_eq() {
+    expected=$1
+    actual=$2
+    name=$3
+    [ "$expected" = "$actual" ] || {
+        printf 'expected:\n%s\nactual:\n%s\n' "$expected" "$actual" >&2
+        fail "$name"
+    }
+}
+
+assert_ok() {
+    name=$1
+    shift
+    "$@" >/dev/null 2>"$WORK/assert.err" || {
+        cat "$WORK/assert.err" >&2
+        fail "$name"
+    }
+}
+
+assert_fail() {
+    name=$1
+    shift
+    if "$@" >"$WORK/assert.out" 2>"$WORK/assert.err"; then
+        cat "$WORK/assert.out" >&2
+        fail "$name"
+    fi
+}
+
+mkdir -p "$BIN" "$NO_ADMIN_BIN" "$STATE" "$ALT_STATE" "$COVERED"
+mkdir -p "$PKGSRC/category/dep" "$PKGSRC/category/app" "$PKGSRC/category/rev" "$PKGSRC/category/old" "$PKGSRC/doc"
 ln -s "$PKGSRC" "$LINKED_PKGSRC"
 : > "$LOG"
 
@@ -43,10 +104,24 @@ case "$1" in
             app:CATEGORIES) echo category ;;
             app:BUILD_DEPENDS) echo 'dep>=1.0:../../category/dep' ;;
             app:RUN_DEPENDS) echo ;;
+            rev:PKGNAME) echo rev-1.0 ;;
+            rev:PKGBASE) echo rev ;;
+            rev:COMMENT) echo reverse dependency package ;;
+            rev:LICENSE) echo mit ;;
+            rev:CATEGORIES) echo category ;;
+            rev:BUILD_DEPENDS) echo ;;
+            rev:RUN_DEPENDS) echo 'app>=1.0:../../category/app' ;;
+            old:PKGNAME) echo old-1.0 ;;
+            old:PKGBASE) echo old ;;
+            old:COMMENT) echo old upgrade candidate ;;
+            old:LICENSE) echo mit ;;
+            old:CATEGORIES) echo category ;;
+            old:BUILD_DEPENDS) echo ;;
+            old:RUN_DEPENDS) echo ;;
             *) echo ;;
         esac
         ;;
-    install|package)
+    install|package|configure)
         echo "$PWD $1" >> "${ADAM_TEST_LOG}"
         ;;
     show-options)
@@ -61,7 +136,8 @@ chmod +x "$BIN/make"
 
 cat > "$BIN/pkg_info" <<'EOF'
 #!/bin/sh
-exit 0
+echo "dep-1.0 Dependency package"
+echo "app-1.0 Application package"
 EOF
 chmod +x "$BIN/pkg_info"
 
@@ -72,21 +148,41 @@ exit 0
 EOF
 chmod +x "$BIN/pkgin"
 
-touch "$PKGSRC/category/dep/Makefile" "$PKGSRC/category/app/Makefile"
+cat > "$BIN/pkg_delete" <<'EOF'
+#!/bin/sh
+echo "pkg_delete $*" >> "${ADAM_TEST_LOG}"
+exit 0
+EOF
+chmod +x "$BIN/pkg_delete"
 
-fail() {
-    echo "not ok - $1" >&2
-    exit 1
-}
+cat > "$BIN/pkg_admin" <<'EOF'
+#!/bin/sh
+echo "pkg_admin $*" >> "${ADAM_TEST_LOG}"
+echo "audit ok"
+exit 0
+EOF
+chmod +x "$BIN/pkg_admin"
 
-ok() {
-    echo "ok - $1"
-}
+for pkg in dep app rev old; do
+    touch "$PKGSRC/category/$pkg/Makefile"
+done
+cat > "$PKGSRC/doc/CHANGES-test" <<'EOF'
+Updated category/app to 1.0 for Adam tests.
+EOF
 
 run_adam() {
     PATH="$BIN:$PATH" ADAM_TEST_LOG="$LOG" "$ROOT/adam" \
         --pkgsrc "$PKGSRC" \
         --db "$STATE/adam-pkg.db" \
+        --make make \
+        --root-cmd none \
+        "$@"
+}
+
+run_adam_alt() {
+    PATH="$BIN:$PATH" ADAM_TEST_LOG="$LOG" "$ROOT/adam" \
+        --pkgsrc "$PKGSRC" \
+        --db "$ALT_STATE/adam-pkg.db" \
         --make make \
         --root-cmd none \
         "$@"
@@ -101,80 +197,352 @@ run_adam_linked_pkgsrc() {
         "$@"
 }
 
+run_adam_no_admin() {
+    PATH="$NO_ADMIN_BIN:/usr/bin:/bin" ADAM_TEST_LOG="$LOG" "$ROOT/adam" \
+        --pkgsrc "$PKGSRC" \
+        --db "$STATE/no-admin-adam-pkg.db" \
+        --make make \
+        --root-cmd none \
+        "$@"
+}
+
+run_config_edit() {
+    PATH="$BIN:$PATH" ADAM_TEST_LOG="$LOG" EDITOR=: "$ROOT/adam" \
+        --pkgsrc "$PKGSRC" \
+        --db "$STATE/adam-pkg.db" \
+        --make make \
+        --root-cmd none \
+        config edit
+}
+
 run_adam update >/dev/null
+cover update
 [ -s "$STATE/tables/available.tsv" ] || fail "update creates available index"
 ok "update creates available index"
 
 plan=$(run_adam plan app)
+cover plan
 expected=$(printf 'category/dep\ncategory/app')
-[ "$plan" = "$expected" ] || {
-    printf 'expected:\n%s\nactual:\n%s\n' "$expected" "$plan" >&2
-    fail "plan orders dependencies before target"
-}
+assert_eq "$expected" "$plan" "plan orders dependencies before target"
 ok "plan orders dependencies before target"
 
 run_adam_linked_pkgsrc update >/dev/null
 linked_plan=$(run_adam_linked_pkgsrc plan app)
-[ "$linked_plan" = "$expected" ] || {
-    printf 'expected:\n%s\nactual:\n%s\n' "$expected" "$linked_plan" >&2
-    fail "plan works with symlinked pkgsrc root"
-}
+assert_eq "$expected" "$linked_plan" "plan works with symlinked pkgsrc root"
 ok "plan works with symlinked pkgsrc root"
 
 run_adam --dry-run install app > "$WORK/dryrun.out"
-grep "category/dep" "$WORK/dryrun.out" >/dev/null || fail "dry run includes dependency"
-grep "category/app" "$WORK/dryrun.out" >/dev/null || fail "dry run includes target"
+cover install
+assert_contains "$WORK/dryrun.out" "category/dep" "dry run includes dependency"
+assert_contains "$WORK/dryrun.out" "category/app" "dry run includes target"
 ok "dry-run install prints source build commands"
 
+run_adam install app >/dev/null
+assert_contains "$LOG" "category/dep install" "source install runs dependency install"
+assert_contains "$LOG" "category/app install" "source install runs target install"
+ok "source install records dependency-first commands"
+
+run_adam reinstall app >/dev/null
+cover reinstall
+ok "reinstall reuses install path"
+
+run_adam build app >/dev/null
+cover build
+assert_contains "$LOG" "category/app package" "build invokes package target"
+ok "build invokes pkgsrc package target"
+
+run_adam --binary update >/dev/null
+assert_contains "$LOG" "pkgin update" "binary update uses pkgin"
+ok "binary update uses pkgin"
+
 run_adam --binary install app >/dev/null
-grep "pkgin install app" "$LOG" >/dev/null || fail "binary mode uses pkgin"
-ok "binary mode uses pkgin"
+assert_contains "$LOG" "pkgin install app" "binary install uses pkgin"
+ok "binary install uses pkgin"
+
+run_adam --binary download app >/dev/null
+cover download
+assert_contains "$LOG" "pkgin download app" "binary download uses pkgin"
+ok "binary download uses pkgin"
+
+run_adam --binary remove app >/dev/null
+assert_contains "$LOG" "pkgin remove app" "binary remove uses pkgin"
+ok "binary remove uses pkgin"
+
+run_adam --binary upgrade >/dev/null
+assert_contains "$LOG" "pkgin upgrade" "binary upgrade uses pkgin"
+ok "binary upgrade uses pkgin"
+
+run_adam --binary autoremove >/dev/null
+cover autoremove
+assert_contains "$LOG" "pkgin autoremove" "binary autoremove uses pkgin"
+ok "binary autoremove uses pkgin"
+
+run_adam search app > "$WORK/search.out"
+cover search
+assert_contains "$WORK/search.out" "app" "search finds app"
+ok "search finds package metadata"
+
+run_adam show app > "$WORK/show.out"
+cover show
+assert_contains "$WORK/show.out" "Package: app-1.0" "show renders metadata"
+ok "show renders metadata"
+
+run_adam source app > "$WORK/source.out"
+cover source
+assert_contains "$WORK/source.out" "category/app" "source resolves pkgsrc path"
+ok "source resolves pkgsrc path"
+
+run_adam list --all-versions > "$WORK/list-all.out"
+cover list
+assert_contains "$WORK/list-all.out" "category/app" "list --all-versions shows available"
+ok "list --all-versions shows available packages"
+
+run_adam list --installed > "$WORK/list-installed.out"
+assert_contains "$WORK/list-installed.out" "dep-1.0" "list --installed shows installed dependency"
+ok "list --installed shows installed packages"
+
+printf 'old\told-0.9\tcategory/old\t0.9\tinstalled\tsource\t0\t\t2026\t2026\n' >> "$STATE/tables/installed.tsv"
+run_adam list --upgradeable > "$WORK/list-upgradeable.out"
+assert_contains "$WORK/list-upgradeable.out" "old 0.9 1.0" "list --upgradeable shows version mismatch"
+ok "list --upgradeable shows upgrade candidates"
+
+run_adam depends app > "$WORK/depends.out"
+cover depends
+assert_contains "$WORK/depends.out" "category/dep" "depends shows pkgsrc dependency"
+ok "depends shows pkgsrc dependency"
+
+run_adam rdepends app > "$WORK/rdepends.out"
+cover rdepends
+assert_contains "$WORK/rdepends.out" "category/rev" "rdepends shows reverse dependency"
+ok "rdepends shows reverse dependency"
+
+run_adam install app >/dev/null
+run_adam policy app > "$WORK/policy.out"
+cover policy
+assert_contains "$WORK/policy.out" "Candidate: 1.0" "policy shows candidate"
+assert_contains "$WORK/policy.out" "Installed: 1.0" "policy shows installed version"
+ok "policy shows installed and candidate"
+
+run_adam build-dep app > "$WORK/build-dep.out"
+cover build-dep
+assert_contains "$WORK/build-dep.out" "category/dep" "build-dep shows dependency"
+ok "build-dep shows dependencies"
+
+run_adam --dry-run satisfy 'app>=1.0' > "$WORK/satisfy.out"
+cover satisfy
+assert_contains "$WORK/satisfy.out" "category/app" "satisfy plans package"
+ok "satisfy parses dependency expression"
+
+run_adam indextargets > "$WORK/indextargets.out"
+cover indextargets
+assert_contains "$WORK/indextargets.out" "database" "indextargets lists database"
+ok "indextargets lists database"
+
+run_adam changelog app > "$WORK/changelog.out"
+cover changelog
+assert_contains "$WORK/changelog.out" "category/app" "changelog finds package entry"
+ok "changelog searches pkgsrc doc entries"
+
+run_adam madison app > "$WORK/madison.out"
+cover madison
+assert_contains "$WORK/madison.out" "app | 1.0 | pkgsrc:category/app" "madison renders source version"
+ok "madison renders source version"
+
+run_adam options app > "$WORK/options.out"
+cover options
+assert_contains "$WORK/options.out" "PKG_OPTIONS.test=feature" "options invokes make show-options"
+ok "options invokes make show-options"
+
+run_adam --dry-run make app configure > "$WORK/make.out"
+cover make
+assert_contains "$WORK/make.out" "make configure" "make command supports dry-run"
+ok "make command supports dry-run"
+
+run_adam audit > "$WORK/audit.out"
+cover audit
+assert_contains "$WORK/audit.out" "audit ok" "audit prints pkg_admin output"
+assert_contains "$LOG" "pkg_admin audit" "audit invokes pkg_admin"
+ok "audit invokes pkg_admin"
+
+assert_fail "audit fails without pkg_admin" run_adam_no_admin audit
+assert_contains "$WORK/assert.err" "pkg_admin unavailable" "audit missing error is clear"
+ok "audit reports unavailable pkg_admin"
+
+run_adam mark manual app
+run_adam mark showmanual > "$WORK/showmanual.out"
+cover mark
+assert_contains "$WORK/showmanual.out" "app" "mark showmanual reports manual"
+ok "mark manual/showmanual works"
+
+run_adam mark auto app
+run_adam mark showauto > "$WORK/showauto.out"
+assert_contains "$WORK/showauto.out" "app" "mark showauto reports auto"
+ok "mark auto/showauto works"
 
 run_adam mark hold app
-if run_adam install app >/dev/null 2>"$WORK/hold.err"; then
-    fail "hold blocks source install"
-fi
-grep "package is on hold" "$WORK/hold.err" >/dev/null || fail "hold error is clear"
+run_adam mark showhold > "$WORK/showhold.out"
+assert_contains "$WORK/showhold.out" "app" "mark showhold reports hold"
+ok "mark hold/showhold works"
+
+assert_fail "hold blocks source install" run_adam install app
+assert_contains "$WORK/assert.err" "package is on hold" "hold error is clear"
 ok "hold blocks source install"
 
 run_adam --ignore-hold --dry-run install app >/dev/null
 ok "ignore-hold allows planning"
 
-run_adam show app > "$WORK/show.out"
-grep "Package: app-1.0" "$WORK/show.out" >/dev/null || fail "show renders metadata"
-ok "show renders metadata"
+run_adam mark minimize-manual > "$WORK/minimize.out"
+assert_contains "$WORK/minimize.out" "not yet implemented" "minimize-manual reports placeholder"
+ok "mark minimize-manual reports current placeholder"
 
-run_adam depends app > "$WORK/depends.out"
-grep "category/dep" "$WORK/depends.out" >/dev/null || fail "depends shows pkgsrc dependency"
-ok "depends shows pkgsrc dependency"
+run_adam mark unhold app
+run_adam mark showhold > "$WORK/showhold-after.out"
+assert_not_contains "$WORK/showhold-after.out" "app" "unhold removes hold"
+ok "mark unhold clears hold"
 
-run_adam config get ADAM_PKGSRCDIR > "$WORK/config.out"
-grep "$PKGSRC" "$WORK/config.out" >/dev/null || fail "config get reports pkgsrc path"
-ok "config get reports pkgsrc path"
+run_adam remove app >/dev/null
+cover remove
+assert_contains "$LOG" "pkg_delete app" "remove invokes pkg_delete"
+ok "remove invokes pkg_delete"
+
+run_adam rm dep >/dev/null
+cover rm
+assert_contains "$LOG" "pkg_delete dep" "rm alias invokes pkg_delete"
+ok "rm alias invokes remove"
+
+run_adam install app >/dev/null
+run_adam purge app >/dev/null
+cover purge
+assert_contains "$LOG" "pkg_delete app" "purge invokes removal path"
+ok "purge invokes removal path"
+
+run_adam install app >/dev/null
+run_adam upgrade >/dev/null
+cover upgrade
+assert_contains "$LOG" "category/app install" "upgrade reinstalls installed app"
+ok "upgrade walks installed packages"
+
+run_adam full-upgrade >/dev/null
+cover full-upgrade
+ok "full-upgrade aliases upgrade"
+
+run_adam dist-upgrade >/dev/null
+cover dist-upgrade
+ok "dist-upgrade aliases full-upgrade"
+
+run_adam db init > "$WORK/db-init.out"
+cover db
+assert_contains "$WORK/db-init.out" "initialized" "db init initializes state"
+ok "db init initializes state"
 
 run_adam db path > "$WORK/dbpath.out"
-grep "$STATE/adam-pkg.db" "$WORK/dbpath.out" >/dev/null || fail "db path reports configured db"
+assert_contains "$WORK/dbpath.out" "$STATE/adam-pkg.db" "db path reports configured db"
 ok "db path reports configured db"
 
+run_adam db tables > "$WORK/dbtables.out"
+assert_contains "$WORK/dbtables.out" "available.tsv" "db tables lists table files"
+ok "db tables lists table files"
+
 run_adam db dump > "$WORK/dbdump.out"
-grep "\[available\]" "$WORK/dbdump.out" >/dev/null || fail "db dump contains available section"
+assert_contains "$WORK/dbdump.out" "\[available\]" "db dump contains available section"
 ok "db dump renders adam-pkg.db"
 
-run_adam madison app > "$WORK/madison.out"
-grep "app | 1.0 | pkgsrc:category/app" "$WORK/madison.out" >/dev/null || fail "madison renders source version"
-ok "madison renders source version"
+run_adam db resync >/dev/null
+run_adam list --installed > "$WORK/resync-list.out"
+assert_contains "$WORK/resync-list.out" "app-1.0" "db resync imports pkg_info"
+ok "db resync imports pkg_info state"
 
-run_adam indextargets > "$WORK/indextargets.out"
-grep "database" "$WORK/indextargets.out" >/dev/null || fail "indextargets lists database"
-ok "indextargets lists database"
+run_adam config dump > "$WORK/config-dump.out"
+cover config
+assert_contains "$WORK/config-dump.out" "ADAM_PKGSRCDIR" "config dump reports keys"
+ok "config dump reports keys"
 
-run_adam options app > "$WORK/options.out"
-grep "PKG_OPTIONS.test=feature" "$WORK/options.out" >/dev/null || fail "options invokes make show-options"
-ok "options invokes make show-options"
+run_adam config get ADAM_PKGSRCDIR > "$WORK/config-get.out"
+assert_contains "$WORK/config-get.out" "$PKGSRC" "config get reports pkgsrc path"
+ok "config get reports pkgsrc path"
 
-run_adam --dry-run make app configure > "$WORK/make.out"
-grep "make configure" "$WORK/make.out" >/dev/null || fail "make command supports dry-run"
-ok "make command supports dry-run"
+run_adam config set TEST_KEY TEST_VALUE >/dev/null
+run_adam db dump > "$WORK/config-set-dump.out"
+assert_contains "$WORK/config-set-dump.out" "TEST_KEY" "config set persists key"
+ok "config set persists key"
+
+run_config_edit >/dev/null
+ok "config edit honors EDITOR"
+
+run_adam check > "$WORK/check.out"
+cover check
+assert_contains "$WORK/check.out" "ok" "check reports synced state"
+ok "check reports synced state"
+
+run_adam check --repair > "$WORK/check-repair.out"
+assert_contains "$WORK/check-repair.out" "repaired" "check --repair refreshes index"
+ok "check --repair refreshes index"
+
+run_adam doctor > "$WORK/doctor.out"
+cover doctor
+assert_contains "$WORK/doctor.out" "state dir:" "doctor reports state"
+ok "doctor reports environment"
+
+run_adam stats > "$WORK/stats.out"
+cover stats
+assert_contains "$WORK/stats.out" "installed" "stats reports installed count"
+assert_contains "$WORK/stats.out" "available" "stats reports available count"
+ok "stats reports counts"
+
+run_adam dumpavail > "$WORK/dumpavail.out"
+cover dumpavail
+assert_contains "$WORK/dumpavail.out" "category/app" "dumpavail prints available table"
+ok "dumpavail prints available table"
+
+run_adam pkgnames app > "$WORK/pkgnames.out"
+cover pkgnames
+assert_contains "$WORK/pkgnames.out" "app-1.0" "pkgnames filters names"
+ok "pkgnames filters names"
+
+run_adam clean > "$WORK/clean.out"
+cover clean
+assert_contains "$WORK/clean.out" "cleaned" "clean reports cleaned"
+ok "clean reports cleaned"
+
+run_adam autoclean > "$WORK/autoclean.out"
+cover autoclean
+assert_contains "$WORK/autoclean.out" "not fully implemented yet" "autoclean reports placeholder"
+ok "autoclean reports current placeholder"
+
+run_adam edit-sources > "$WORK/edit-sources.out"
+cover edit-sources
+assert_contains "$WORK/edit-sources.out" "not implemented yet" "edit-sources reports placeholder"
+ok "edit-sources reports current placeholder"
+
+run_adam download app > "$WORK/download-placeholder.out"
+assert_contains "$WORK/download-placeholder.out" "not fully implemented yet" "source download reports placeholder"
+ok "source download reports current placeholder"
+
+assert_fail "unknown command fails" run_adam no-such-command
+assert_contains "$WORK/assert.err" "unknown command" "unknown command error is clear"
+ok "unknown command fails clearly"
+
+assert_fail "install missing args fails" run_adam install
+assert_contains "$WORK/assert.err" "install requires" "install missing args error is clear"
+ok "missing install args fail clearly"
+
+assert_fail "unknown config key fails" run_adam config get UNKNOWN_KEY
+assert_contains "$WORK/assert.err" "unknown config key" "unknown config key error is clear"
+ok "unknown config key fails clearly"
+
+assert_fail "unknown package fails" run_adam show missing
+assert_contains "$WORK/assert.err" "unknown package" "unknown package error is clear"
+ok "unknown package fails clearly"
+
+run_adam_alt update >/dev/null
+run_adam_alt --dry-run satisfy 'app>=1.0' >/dev/null
+ok "alternate state can satisfy dependency expressions"
+
+EXPECTED_COMMANDS="update install reinstall remove rm purge upgrade full-upgrade dist-upgrade autoremove search show list depends rdepends policy mark build plan source download build-dep satisfy indextargets changelog madison audit options make clean autoclean check doctor stats dumpavail pkgnames config db edit-sources"
+for cmd in $EXPECTED_COMMANDS; do
+    [ -f "$COVERED/$cmd" ] || fail "missing command coverage: $cmd"
+done
+ok "all public dispatch commands are covered"
 
 sh -n "$ROOT/adam"
 ok "adam passes sh -n"

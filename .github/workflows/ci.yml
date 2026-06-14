@@ -6,15 +6,6 @@ on:
       - master
   pull_request:
   workflow_dispatch:
-    inputs:
-      run_pkgsrc_build:
-        description: "Run the real pkgsrc build job"
-        required: false
-        default: "false"
-        type: choice
-        options:
-          - "false"
-          - "true"
   schedule:
     - cron: "17 3 * * 1"
 
@@ -73,9 +64,6 @@ jobs:
     name: NetBSD real pkgsrc build
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    if: >-
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_pkgsrc_build == 'true')
     steps:
       - name: Checkout
         uses: actions/checkout@v5

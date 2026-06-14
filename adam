@@ -718,6 +718,9 @@ maybe_run_pkgin() {
         autoremove)
             run_as_root "$ADAM_PKGIN_CMD autoremove"
             ;;
+        download)
+            run_as_root "$ADAM_PKGIN_CMD download $*"
+            ;;
         *)
             return 1
             ;;
@@ -1034,7 +1037,11 @@ cmd_db() {
         dump) db_dump ;;
         resync) db_resync_installed ;;
         path) printf '%s\n' "$ADAM_DB_PATH" ;;
-        tables) find "${ADAM_STATE_DIR}/tables" -maxdepth 1 -type f -print 2>/dev/null || true ;;
+        tables)
+            for table in "${ADAM_STATE_DIR}/tables"/*.tsv; do
+                [ -f "$table" ] && printf '%s\n' "$table"
+            done
+            ;;
         *)
             die "unknown db command: $sub"
             ;;
@@ -1087,7 +1094,8 @@ cmd_changelog() {
     [ "$#" -gt 0 ] || die "changelog requires a package"
     pkg="$1"
     if [ -d "$ADAM_PKGSRCDIR/doc" ]; then
-        find "$ADAM_PKGSRCDIR/doc" -maxdepth 1 -type f -name 'CHANGES-*' -print 2>/dev/null | sort | while IFS= read -r f; do
+        for f in "$ADAM_PKGSRCDIR"/doc/CHANGES-*; do
+            [ -f "$f" ] || continue
             grep -i "$pkg" "$f" || true
         done
     else
