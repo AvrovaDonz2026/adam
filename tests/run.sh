@@ -60,6 +60,16 @@ assert_eq() {
     }
 }
 
+assert_order() {
+    file=$1
+    first=$2
+    second=$3
+    name=$4
+    first_line=$(awk -v p="$first" 'index($0, p) { print NR; exit }' "$file")
+    second_line=$(awk -v p="$second" 'index($0, p) { print NR; exit }' "$file")
+    [ -n "$first_line" ] && [ -n "$second_line" ] && [ "$first_line" -lt "$second_line" ] || fail "$name"
+}
+
 assert_ok() {
     name=$1
     shift
@@ -155,6 +165,9 @@ chmod +x "$BIN/pkgin"
 cat > "$BIN/pkg_delete" <<'EOF'
 #!/bin/sh
 echo "pkg_delete $*" >> "${ADAM_TEST_LOG}"
+if [ "${ADAM_TEST_DELETE_FAIL:-}" = "$1" ]; then
+    exit 1
+fi
 exit 0
 EOF
 chmod +x "$BIN/pkg_delete"
@@ -205,6 +218,17 @@ run_adam_no_admin() {
     PATH="$NO_ADMIN_BIN:/usr/bin:/bin" ADAM_TEST_LOG="$LOG" "$ROOT/adam" \
         --pkgsrc "$PKGSRC" \
         --db "$STATE/no-admin-adam-pkg.db" \
+        --make make \
+        --root-cmd none \
+        "$@"
+}
+
+run_adam_delete_fail() {
+    fail_pkg=$1
+    shift
+    PATH="$BIN:$PATH" ADAM_TEST_LOG="$LOG" ADAM_TEST_DELETE_FAIL="$fail_pkg" "$ROOT/adam" \
+        --pkgsrc "$PKGSRC" \
+        --db "$STATE/adam-pkg.db" \
         --make make \
         --root-cmd none \
         "$@"
@@ -447,14 +471,19 @@ assert_not_contains "$WORK/showhold-after.out" "app" "unhold removes hold"
 ok "mark unhold clears hold"
 
 tx_before=$(transaction_count)
-run_adam --dry-run remove app > "$WORK/remove-dry.out"
+run_adam --dry-run remove category/app > "$WORK/remove-dry.out"
 assert_contains "$WORK/remove-dry.out" "pkg_delete" "dry-run remove prints delete command"
 run_adam list --installed > "$WORK/remove-dry-list.out"
 assert_contains "$WORK/remove-dry-list.out" "app-1.0" "dry-run remove keeps installed state"
 tx_after=$(transaction_count)
 assert_eq "$tx_before" "$tx_after" "dry-run remove leaves transactions unchanged"
 
-run_adam remove app >/dev/null
+run_adam_delete_fail app remove category/app >/dev/null || true
+assert_contains "$LOG" "pkg_delete app" "remove resolves pkgbase before deleting"
+run_adam list --installed > "$WORK/remove-fail-list.out"
+assert_contains "$WORK/remove-fail-list.out" "app-1.0" "failed remove keeps installed state"
+
+run_adam remove category/app >/dev/null
 cover remove
 assert_contains "$LOG" "pkg_delete app" "remove invokes pkg_delete"
 ok "remove invokes pkg_delete"
@@ -477,13 +506,23 @@ assert_not_contains "$WORK/autoremove-list.out" "dep-1.0" "autoremove removes de
 ok "autoremove removes orphan automatic packages"
 
 run_adam install app >/dev/null
-run_adam remove app >/dev/null
+run_adam remove category/app >/dev/null
 run_adam --dry-run autoremove > "$WORK/autoremove-dry.out"
 assert_contains "$WORK/autoremove-dry.out" "pkg_delete dep" "autoremove dry-run prints deletion"
 run_adam list --installed > "$WORK/autoremove-dry-list.out"
 assert_contains "$WORK/autoremove-dry-list.out" "dep-1.0" "autoremove dry-run keeps state"
 ok "autoremove dry-run leaves state unchanged"
 
+: > "$LOG"
+: > "$STATE/tables/installed.tsv"
+printf 'dep\tdep-1.0\tcategory/dep\t1.0\tinstalled\tsource\t1\t\t2026\t2026\n' >> "$STATE/tables/installed.tsv"
+printf 'app\tapp-1.0\tcategory/app\t1.0\tinstalled\tsource\t1\t\t2026\t2026\n' >> "$STATE/tables/installed.tsv"
+run_adam autoremove > "$WORK/autoremove-order.out"
+assert_order "$LOG" "pkg_delete app" "pkg_delete dep" "autoremove deletes dependents before dependencies"
+ok "autoremove removes orphan automatic packages in reverse order"
+
+run_adam install app >/dev/null
+run_adam remove category/app >/dev/null
 run_adam mark hold dep
 run_adam autoremove > "$WORK/autoremove-hold.out"
 assert_contains "$WORK/autoremove-hold.out" "nothing to do" "held automatic package is skipped"

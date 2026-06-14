@@ -39,9 +39,9 @@ jobs:
         run: sh tests/run.sh
 
   pkgsrc-real-build-native:
-    name: Real pkgsrc build (${{ matrix.os }})
+    name: Real pkgsrc lifecycle (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -54,22 +54,22 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build tiny pkgsrc package
+      - name: Install, test, and remove complex pkgsrc package
         env:
           PKGSRC_BOOTSTRAP: unprivileged
           PKGSRC_DIR: ${{ runner.temp }}/pkgsrc
           PKGSRC_PREFIX: ${{ runner.temp }}/pkg
           STATE_DIR: ${{ runner.temp }}/adam-pkgsrc-state
           ADAM_TEST_BUILD_ROOT: "0"
-          TEST_PKG: misc/figlet
+          TEST_PKG: devel/git-base
         run: |
           uname -a
-          sh tests/pkgsrc-smoke.sh build
+          sh tests/pkgsrc-smoke.sh lifecycle
 
   pkgsrc-real-build-bsd:
-    name: Real pkgsrc build (${{ matrix.os.name }})
+    name: Real pkgsrc lifecycle (${{ matrix.os.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 240
     defaults:
       run:
         shell: cpa.sh {0}
@@ -103,7 +103,7 @@ jobs:
           STATE_DIR: /tmp/adam-pkgsrc-state
           ADAM_TEST_MAKE_CMD: ${{ matrix.os.make }}
           ADAM_TEST_BUILD_ROOT: ${{ matrix.os.build_root }}
-          TEST_PKG: misc/figlet
+          TEST_PKG: devel/git-base
         with:
           operating_system: ${{ matrix.os.name }}
           version: ${{ matrix.os.version }}
@@ -113,14 +113,14 @@ jobs:
           cpu_count: 2
           environment_variables: PKGSRC_BOOTSTRAP PKGSRC_DIR STATE_DIR ADAM_TEST_MAKE_CMD ADAM_TEST_BUILD_ROOT TEST_PKG
 
-      - name: Build tiny pkgsrc package on ${{ matrix.os.name }}
+      - name: Install, test, and remove complex pkgsrc package on ${{ matrix.os.name }}
         env:
           PKGSRC_BOOTSTRAP: ${{ matrix.os.bootstrap }}
           PKGSRC_DIR: /tmp/pkgsrc
           STATE_DIR: /tmp/adam-pkgsrc-state
           ADAM_TEST_MAKE_CMD: ${{ matrix.os.make }}
           ADAM_TEST_BUILD_ROOT: ${{ matrix.os.build_root }}
-          TEST_PKG: misc/figlet
+          TEST_PKG: devel/git-base
         run: |
           uname -a
-          sh tests/pkgsrc-smoke.sh build
+          sh tests/pkgsrc-smoke.sh lifecycle

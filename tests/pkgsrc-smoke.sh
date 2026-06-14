@@ -205,6 +205,90 @@ run_adam_as_root() {
         "$@"
 }
 
+run_adam_real() {
+    if [ "$ADAM_TEST_BUILD_ROOT" -eq 1 ]; then
+        run_adam_as_root "$@"
+    else
+        run_adam "$@"
+    fi
+}
+
+pkg_info_has() {
+    pkgbase="$1"
+    pkg_info 2>/dev/null | awk -v p="$pkgbase" '
+        $1 == p || $1 ~ ("^" p "-") { found = 1 }
+        END { exit found ? 0 : 1 }
+    '
+}
+
+assert_pkg_installed() {
+    pkgbase="$1"
+    pkg_info_has "$pkgbase" || fail "system pkgdb is missing $pkgbase"
+}
+
+assert_pkg_absent() {
+    pkgbase="$1"
+    if pkg_info_has "$pkgbase"; then
+        fail "system pkgdb still contains $pkgbase"
+    fi
+}
+
+assert_adam_installed() {
+    pkgbase="$1"
+    run_adam_real list --installed > /tmp/adam-list-installed.out
+    grep "^$pkgbase	" /tmp/adam-list-installed.out >/dev/null || fail "Adam state is missing $pkgbase"
+}
+
+assert_adam_absent() {
+    pkgbase="$1"
+    run_adam_real list --installed > /tmp/adam-list-installed.out
+    if grep "^$pkgbase	" /tmp/adam-list-installed.out >/dev/null; then
+        fail "Adam state still contains $pkgbase"
+    fi
+}
+
+automatic_pkgbases() {
+    run_adam_real list --installed | awk -F '\t' '$7 == "1" { print $1 }'
+}
+
+installed_pkgbase_for_path() {
+    pkgpath="$1"
+    run_adam_real list --installed | awk -F '\t' -v p="$pkgpath" '$3 == p { print $1; exit }'
+}
+
+run_lifecycle() {
+    run_adam_real install "$TEST_PKG"
+    ok "real pkgsrc install completed for $TEST_PKG"
+
+    test_pkgbase=$(installed_pkgbase_for_path "$TEST_PKG")
+    [ -n "$test_pkgbase" ] || fail "Adam state does not contain installed path $TEST_PKG"
+    assert_pkg_installed "$test_pkgbase"
+    assert_adam_installed "$test_pkgbase"
+    ok "installed package is present in system pkgdb and Adam state"
+
+    automatic_pkgbases > /tmp/adam-auto-before-remove.out
+    run_adam_real policy "$TEST_PKG" > /tmp/adam-policy.out
+    grep "Installed:" /tmp/adam-policy.out >/dev/null || fail "policy reports installed package"
+    ok "policy reports lifecycle package"
+
+    run_adam_real remove "$TEST_PKG"
+    assert_pkg_absent "$test_pkgbase"
+    assert_adam_absent "$test_pkgbase"
+    ok "real pkgsrc remove completed for $TEST_PKG"
+
+    if [ -s /tmp/adam-auto-before-remove.out ]; then
+        run_adam_real autoremove
+        while IFS= read -r pkgbase; do
+            [ -n "$pkgbase" ] || continue
+            assert_adam_absent "$pkgbase"
+            assert_pkg_absent "$pkgbase"
+        done < /tmp/adam-auto-before-remove.out
+        ok "real pkgsrc autoremove cleaned Adam-managed automatic dependencies"
+    else
+        ok "no Adam-managed automatic dependencies to autoremove"
+    fi
+}
+
 ensure_pkgsrc
 bootstrap_pkgsrc
 activate_pkgsrc_prefix
@@ -232,12 +316,11 @@ case "$MODE" in
     smoke)
         ;;
     build)
-        if [ "$ADAM_TEST_BUILD_ROOT" -eq 1 ]; then
-            run_adam_as_root build "$TEST_PKG"
-        else
-            run_adam build "$TEST_PKG"
-        fi
+        run_adam_real build "$TEST_PKG"
         ok "real pkgsrc build completed for $TEST_PKG"
+        ;;
+    lifecycle)
+        run_lifecycle
         ;;
     *)
         fail "unknown mode: $MODE"

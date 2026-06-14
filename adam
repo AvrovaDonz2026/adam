@@ -873,6 +873,10 @@ db_list_marks() {
     cat "$(table_path marks)"
 }
 
+reverse_file() {
+    awk '{ lines[NR] = $0 } END { for (i = NR; i >= 1; i--) print lines[i] }' "$1"
+}
+
 db_build_snapshot() {
     snapshot_db
 }
@@ -1118,6 +1122,34 @@ record_install() {
     db_upsert_installed "$pkgbase" "$pkgname" "$pkgpath" "$version" "installed" "$origin" "$automatic" "$hold" "$(ts_now)" "$(ts_now)"
 }
 
+resolve_remove_target() {
+    pkg="$1"
+    pkgpath=$(resolve_pkgpath_from_name "$pkg" || true)
+    if [ -n "$pkgpath" ]; then
+        line=$(resolve_pkgmeta "$pkgpath")
+        pkgbase=$(pkgmeta_field "$line" 1)
+    else
+        line=$(db_lookup_installed "$pkg" || true)
+        if [ -n "$line" ]; then
+            pkgbase=$(pkgmeta_field "$line" 1)
+            pkgpath=$(pkgmeta_field "$line" 3)
+        else
+            pkgbase="$pkg"
+            pkgpath=""
+        fi
+    fi
+    printf '%s\t%s\n' "$pkgbase" "$pkgpath"
+}
+
+delete_pkgbase() {
+    pkgbase="$1"
+    if [ "$ADAM_DRY_RUN" -eq 1 ]; then
+        printf '+ pkg_delete %s\n' "$pkgbase"
+        return 0
+    fi
+    run_as_root "pkg_delete '$pkgbase'"
+}
+
 maybe_run_pkgin() {
     action="$1"
     shift
@@ -1281,21 +1313,16 @@ cmd_build() {
 cmd_remove() {
     [ "$#" -gt 0 ] || die "remove requires at least one package"
     for pkg in "$@"; do
-        ensure_not_held "$pkg"
+        target=$(resolve_remove_target "$pkg")
+        pkgbase=$(printf '%s\n' "$target" | awk -F '\t' '{print $1}')
+        ensure_not_held "$pkgbase"
         if [ "$ADAM_BINARY_MODE" -eq 1 ] && maybe_run_pkgin remove "$pkg"; then
             :
         else
-            run_as_root "pkg_delete '$pkg'" || true
+            delete_pkgbase "$pkgbase"
         fi
         if [ "$ADAM_DRY_RUN" -eq 1 ]; then
             continue
-        fi
-        pkgpath=$(resolve_pkgpath_from_name "$pkg" || true)
-        if [ -n "$pkgpath" ]; then
-            line=$(resolve_pkgmeta "$pkgpath")
-            pkgbase=$(pkgmeta_field "$line" 1)
-        else
-            pkgbase="$pkg"
         fi
         db_remove_installed "$pkgbase"
         db_add_transaction "$(now_id)" remove "$pkg" ok "-"
@@ -1345,18 +1372,19 @@ cmd_autoremove() {
         printf 'nothing to do\n'
         return 0
     fi
+    ordered_candidates="${ADAM_STATE_DIR}/autoremove-ordered.$$"
+    reverse_file "$candidates" > "$ordered_candidates"
     while IFS='	' read -r pkgbase pkgpath; do
         [ -n "$pkgbase" ] || continue
         ensure_not_held "$pkgbase"
+        delete_pkgbase "$pkgbase"
         if [ "$ADAM_DRY_RUN" -eq 1 ]; then
-            printf '+ pkg_delete %s\n' "$pkgbase"
             continue
         fi
-        run_as_root "pkg_delete '$pkgbase'" || true
         db_remove_installed "$pkgbase"
         db_add_transaction "$(now_id)" autoremove "$pkgbase" ok "-"
-    done < "$candidates"
-    rm -f "$candidates"
+    done < "$ordered_candidates"
+    rm -f "$candidates" "$ordered_candidates"
     if [ "$ADAM_DRY_RUN" -eq 1 ]; then
         return 0
     fi
