@@ -38,47 +38,81 @@ jobs:
       - name: Fake pkgsrc test suite
         run: sh tests/run.sh
 
-  netbsd-pkgsrc-smoke:
-    name: NetBSD pkgsrc smoke
-    runs-on: ubuntu-latest
+  pkgsrc-real-build-native:
+    name: Real pkgsrc build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
           persist-credentials: false
 
-      - name: Run smoke tests on NetBSD
-        uses: cross-platform-actions/action@v0.30.0
-        with:
-          operating_system: netbsd
-          version: "10.1"
-          architecture: x86-64
-          shell: sh
-          memory: 6G
-          cpu_count: 2
-          run: |
-            uname -a
-            sh tests/pkgsrc-smoke.sh smoke
+      - name: Build tiny pkgsrc package
+        env:
+          PKGSRC_BOOTSTRAP: unprivileged
+          PKGSRC_DIR: ${{ runner.temp }}/pkgsrc
+          PKGSRC_PREFIX: ${{ runner.temp }}/pkg
+          STATE_DIR: ${{ runner.temp }}/adam-pkgsrc-state
+          ADAM_TEST_BUILD_ROOT: "0"
+          TEST_PKG: misc/figlet
+        run: |
+          uname -a
+          sh tests/pkgsrc-smoke.sh build
 
-  netbsd-pkgsrc-build:
-    name: NetBSD real pkgsrc build
+  pkgsrc-real-build-bsd:
+    name: Real pkgsrc build (${{ matrix.os.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: cpa.sh {0}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: netbsd
+            version: "10.1"
+            architecture: x86-64
+            bootstrap: none
+            make: make
+            build_root: "1"
+          - name: openbsd
+            version: "7.9"
+            architecture: x86-64
+            bootstrap: privileged
+            make: /usr/pkg/bin/bmake
+            build_root: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
           persist-credentials: false
 
-      - name: Build tiny pkgsrc package on NetBSD
-        uses: cross-platform-actions/action@v0.30.0
+      - name: Start ${{ matrix.os.name }} VM
+        uses: cross-platform-actions/action@v1.2.0
         with:
-          operating_system: netbsd
-          version: "10.1"
-          architecture: x86-64
+          operating_system: ${{ matrix.os.name }}
+          version: ${{ matrix.os.version }}
+          architecture: ${{ matrix.os.architecture }}
           shell: sh
           memory: 6G
           cpu_count: 2
-          run: |
-            uname -a
-            sh tests/pkgsrc-smoke.sh build
+
+      - name: Build tiny pkgsrc package on ${{ matrix.os.name }}
+        env:
+          PKGSRC_BOOTSTRAP: ${{ matrix.os.bootstrap }}
+          PKGSRC_DIR: /tmp/pkgsrc
+          STATE_DIR: /tmp/adam-pkgsrc-state
+          ADAM_TEST_MAKE_CMD: ${{ matrix.os.make }}
+          ADAM_TEST_BUILD_ROOT: ${{ matrix.os.build_root }}
+          TEST_PKG: misc/figlet
+        run: |
+          uname -a
+          sh tests/pkgsrc-smoke.sh build
