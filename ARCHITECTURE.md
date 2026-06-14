@@ -37,6 +37,7 @@ The planner resolves dependency paths and emits a dependency-first build order.
 ### Executor
 
 The executor runs pkgsrc make targets or, in binary mode, delegates to `pkgin`.
+Source downloads use pkgsrc `make fetch`; builds use `make package`; installs use `make install`.
 
 ## State Authority
 
@@ -51,5 +52,5 @@ Use `adam db resync` to import system pkgdb state into Adam.
 - Adam does not implement pbulk in v1.
 - Some apt commands are nearest equivalents, not Debian semantic clones.
 - `purge` cannot reliably remove application-specific configuration files that pkgsrc itself does not track.
-- `autoremove` and `autoclean` are currently conservative.
-
+- `autoremove` is conservative: it only removes Adam-managed automatic packages that are no longer dependency-reachable from installed manual roots.
+- `autoclean` only removes Adam state scratch files. It does not delete pkgsrc distfiles or package archives.

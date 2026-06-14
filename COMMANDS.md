@@ -24,7 +24,7 @@ Upgrade installed packages.
 Upgrade with full dependency resolution.
 
 ### `adam autoremove`
-Remove automatically installed packages that are no longer needed.
+Conservatively remove Adam-managed automatic packages that are no longer reachable from any installed manual package. Held packages are never autoremoved.
 
 ### `adam search PATTERN`
 Search package metadata.
@@ -45,7 +45,10 @@ Show reverse dependencies.
 Show installation policy information.
 
 ### `adam mark manual|auto|hold|unhold PKG...`
-Change package marks.
+Change package marks. For installed packages, `manual` and `auto` also update Adam's installed automatic flag.
+
+### `adam mark minimize-manual`
+Mark installed manual packages as automatic when they are reachable as dependencies of other manual packages.
 
 ### `adam reinstall PKG...`
 Reinstall packages using the current backend.
@@ -60,7 +63,7 @@ Print the planned dependency build order.
 Print pkgsrc paths for packages.
 
 ### `adam download PKG...`
-Download package artifacts when supported.
+Download package artifacts. In source mode Adam runs pkgsrc `make fetch`; in binary mode it delegates to `pkgin download`.
 
 ### `adam build-dep PKG...`
 Build package dependencies.
@@ -90,7 +93,7 @@ Run a pkgsrc make target in a package directory.
 Remove local scratch data.
 
 ### `adam autoclean`
-Clean stale package data.
+Clean stale Adam state scratch files. Adam does not delete pkgsrc distfiles or package archives unless it can prove ownership.
 
 ### `adam check`
 Check Adam state against the system package database.
@@ -118,6 +121,9 @@ Rebuild Adam's installed-package table from the system pkgdb.
 
 ### `adam db path`
 Print the active database path.
+
+### `adam edit-sources`
+Open the active Adam config file in `$EDITOR`, creating a template if it does not exist.
 
 ## Notes
 
