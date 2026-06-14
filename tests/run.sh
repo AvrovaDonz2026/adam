@@ -45,6 +45,9 @@ case "$1" in
     install|package)
         echo "$PWD $1" >> "${ADAM_TEST_LOG}"
         ;;
+    show-options)
+        echo "PKG_OPTIONS.test=feature"
+        ;;
     *)
         echo "$PWD $*" >> "${ADAM_TEST_LOG}"
         ;;
@@ -135,6 +138,22 @@ ok "db path reports configured db"
 run_adam db dump > "$WORK/dbdump.out"
 grep "\[available\]" "$WORK/dbdump.out" >/dev/null || fail "db dump contains available section"
 ok "db dump renders adam-pkg.db"
+
+run_adam madison app > "$WORK/madison.out"
+grep "app | 1.0 | pkgsrc:category/app" "$WORK/madison.out" >/dev/null || fail "madison renders source version"
+ok "madison renders source version"
+
+run_adam indextargets > "$WORK/indextargets.out"
+grep "database" "$WORK/indextargets.out" >/dev/null || fail "indextargets lists database"
+ok "indextargets lists database"
+
+run_adam options app > "$WORK/options.out"
+grep "PKG_OPTIONS.test=feature" "$WORK/options.out" >/dev/null || fail "options invokes make show-options"
+ok "options invokes make show-options"
+
+run_adam --dry-run make app configure > "$WORK/make.out"
+grep "make configure" "$WORK/make.out" >/dev/null || fail "make command supports dry-run"
+ok "make command supports dry-run"
 
 sh -n "$ROOT/adam"
 ok "adam passes sh -n"
