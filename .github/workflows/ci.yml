@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_pkgsrc_build:
+        description: "Run the real pkgsrc build job"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell-tests:
+    name: Shell tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Syntax check
+        run: sh -n adam
+
+      - name: Fake pkgsrc test suite
+        run: sh tests/run.sh
+
+  netbsd-pkgsrc-smoke:
+    name: NetBSD pkgsrc smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Run smoke tests on NetBSD
+        uses: cross-platform-actions/action@v0.30.0
+        with:
+          operating_system: netbsd
+          version: "10.1"
+          architecture: x86-64
+          shell: sh
+          memory: 6G
+          cpu_count: 2
+          run: |
+            uname -a
+            sh tests/pkgsrc-smoke.sh smoke
+
+  netbsd-pkgsrc-build:
+    name: NetBSD real pkgsrc build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_pkgsrc_build == 'true')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Build tiny pkgsrc package on NetBSD
+        uses: cross-platform-actions/action@v0.30.0
+        with:
+          operating_system: netbsd
+          version: "10.1"
+          architecture: x86-64
+          shell: sh
+          memory: 6G
+          cpu_count: 2
+          run: |
+            uname -a
+            sh tests/pkgsrc-smoke.sh build
