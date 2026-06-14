@@ -11,6 +11,7 @@ TEST_PKG="${TEST_PKG:-misc/figlet}"
 PKGSRC_BOOTSTRAP="${PKGSRC_BOOTSTRAP:-none}"
 ADAM_TEST_MAKE_CMD="${ADAM_TEST_MAKE_CMD:-}"
 ADAM_TEST_BUILD_ROOT="${ADAM_TEST_BUILD_ROOT:-0}"
+BMAKE_MIN_VERSION="${BMAKE_MIN_VERSION:-20240711}"
 
 case "$PKGSRC_BOOTSTRAP" in
     unprivileged)
@@ -77,22 +78,50 @@ ensure_pkgsrc() {
 }
 
 root_exec() {
-    if [ "$(id -u)" -eq 0 ]; then
+    prefix=$(root_prefix) || fail "passwordless doas or sudo is required"
+    if [ -z "$prefix" ]; then
         "$@"
+    else
+        $prefix "$@"
+    fi
+}
+
+root_prefix() {
+    if [ "$(id -u)" -eq 0 ]; then
+        printf '%s\n' ""
         return 0
     fi
 
     if command -v doas >/dev/null 2>&1 && doas -n true >/dev/null 2>&1; then
-        doas -n "$@"
+        printf '%s\n' "doas -n"
         return 0
     fi
 
     if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
-        sudo -n "$@"
+        printf '%s\n' "sudo -n"
         return 0
     fi
 
-    fail "passwordless doas or sudo is required"
+    return 1
+}
+
+pkgsrc_su_cmd() {
+    prefix=$(root_prefix) || return 1
+    if [ -z "$prefix" ]; then
+        printf '%s\n' "sh -c"
+    else
+        printf '%s\n' "$prefix sh -c"
+    fi
+}
+
+bmake_is_current() {
+    makecmd="$1"
+    [ -x "$makecmd" ] || return 1
+    version=$("$makecmd" -V MAKE_VERSION 2>/dev/null || true)
+    case "$version" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "$version" -ge "$BMAKE_MIN_VERSION" ]
 }
 
 bootstrap_pkgsrc() {
@@ -101,7 +130,7 @@ bootstrap_pkgsrc() {
             return 0
             ;;
         unprivileged)
-            if [ -x "$PKGSRC_PREFIX/bin/bmake" ]; then
+            if bmake_is_current "$PKGSRC_PREFIX/bin/bmake"; then
                 return 0
             fi
             (
@@ -113,7 +142,7 @@ bootstrap_pkgsrc() {
             )
             ;;
         privileged)
-            if [ -x "$PKGSRC_PREFIX/bin/bmake" ]; then
+            if bmake_is_current "$PKGSRC_PREFIX/bin/bmake"; then
                 return 0
             fi
             root_exec env \
@@ -145,6 +174,16 @@ adam_make_cmd() {
     fi
 }
 
+show_make_cmd() {
+    makecmd=$(adam_make_cmd)
+    version=$(sh -c "$makecmd -V MAKE_VERSION" 2>/dev/null || true)
+    if [ -n "$version" ]; then
+        printf 'using pkgsrc make: %s (MAKE_VERSION=%s)\n' "$makecmd" "$version"
+    else
+        printf 'using pkgsrc make: %s\n' "$makecmd"
+    fi
+}
+
 run_adam() {
     makecmd=$(adam_make_cmd)
     "$ROOT/adam" \
@@ -157,7 +196,8 @@ run_adam() {
 
 run_adam_as_root() {
     makecmd=$(adam_make_cmd)
-    root_exec env PATH="$PATH" "$ROOT/adam" \
+    sucmd=$(pkgsrc_su_cmd) || fail "passwordless doas or sudo is required"
+    root_exec env PATH="$PATH" SU_CMD="$sucmd" "$ROOT/adam" \
         --pkgsrc "$PKGSRC_DIR" \
         --db "$STATE_DIR/adam-root-pkg.db" \
         --make "$makecmd" \
@@ -168,6 +208,7 @@ run_adam_as_root() {
 ensure_pkgsrc
 bootstrap_pkgsrc
 activate_pkgsrc_prefix
+show_make_cmd
 
 sh -n "$ROOT/adam"
 ok "adam passes sh -n"
