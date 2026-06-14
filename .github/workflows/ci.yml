@@ -114,6 +114,13 @@ jobs:
           environment_variables: PKGSRC_BOOTSTRAP PKGSRC_DIR STATE_DIR ADAM_TEST_MAKE_CMD ADAM_TEST_BUILD_ROOT TEST_PKG
 
       - name: Build tiny pkgsrc package on ${{ matrix.os.name }}
+        env:
+          PKGSRC_BOOTSTRAP: ${{ matrix.os.bootstrap }}
+          PKGSRC_DIR: /tmp/pkgsrc
+          STATE_DIR: /tmp/adam-pkgsrc-state
+          ADAM_TEST_MAKE_CMD: ${{ matrix.os.make }}
+          ADAM_TEST_BUILD_ROOT: ${{ matrix.os.build_root }}
+          TEST_PKG: misc/figlet
         run: |
           uname -a
           sh tests/pkgsrc-smoke.sh build
