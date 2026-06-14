@@ -21,6 +21,7 @@ Binary package support through `pkgin` is available as an opt-in backend.
 ./adam --binary install foo
 ./adam search foo
 ./adam show foo
+./adam db dump
 ```
 
 ## Configuration
@@ -65,6 +66,13 @@ The database tracks:
 - file records
 
 Adam treats this database as its authoritative state for Adam-managed operations.
+The system pkgdb remains the low-level install substrate used by pkgsrc tools.
+If Adam and the system pkgdb drift apart, run:
+
+```sh
+./adam check
+./adam db resync
+```
 
 ## Commands
 
@@ -93,6 +101,32 @@ Common commands:
 - `autoclean`
 - `check`
 - `doctor`
+- `config`
+- `db`
+
+## Source-first Model
+
+`adam install PKG` resolves the package in pkgsrc, creates a dependency plan, and runs the pkgsrc install target in dependency order.
+
+Use binary mode explicitly:
+
+```sh
+./adam --binary install PKG
+```
+
+## Development Workflow
+
+Development uses milestone commits. Each major capability should be staged with `git add` and committed before moving to the next capability.
+
+Suggested milestones:
+
+1. `chore: scaffold adam core`
+2. `feat: add adam package database`
+3. `feat: implement source-first pkgsrc install`
+4. `feat: add apt-family commands`
+5. `feat: add optional pkgin backend`
+6. `test: add shell test suite`
+7. `docs: complete English documentation`
 
 ## Testing
 
@@ -103,4 +137,3 @@ sh tests/run.sh
 ```
 
 The test suite uses fake tools and a fake pkgsrc tree.
-

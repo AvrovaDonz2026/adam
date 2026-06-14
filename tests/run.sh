@@ -124,5 +124,17 @@ run_adam depends app > "$WORK/depends.out"
 grep "category/dep" "$WORK/depends.out" >/dev/null || fail "depends shows pkgsrc dependency"
 ok "depends shows pkgsrc dependency"
 
+run_adam config get ADAM_PKGSRCDIR > "$WORK/config.out"
+grep "$PKGSRC" "$WORK/config.out" >/dev/null || fail "config get reports pkgsrc path"
+ok "config get reports pkgsrc path"
+
+run_adam db path > "$WORK/dbpath.out"
+grep "$STATE/adam-pkg.db" "$WORK/dbpath.out" >/dev/null || fail "db path reports configured db"
+ok "db path reports configured db"
+
+run_adam db dump > "$WORK/dbdump.out"
+grep "\[available\]" "$WORK/dbdump.out" >/dev/null || fail "db dump contains available section"
+ok "db dump renders adam-pkg.db"
+
 sh -n "$ROOT/adam"
 ok "adam passes sh -n"

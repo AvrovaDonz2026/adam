@@ -47,6 +47,9 @@ Show installation policy information.
 ### `adam mark manual|auto|hold|unhold PKG...`
 Change package marks.
 
+### `adam reinstall PKG...`
+Reinstall packages using the current backend.
+
 ### `adam build PKG...`
 Build packages from pkgsrc without installing them.
 
@@ -74,9 +77,30 @@ Check Adam state against the system package database.
 ### `adam doctor`
 Inspect the local Adam environment.
 
+### `adam config dump`
+Print effective configuration.
+
+### `adam config get KEY`
+Print one configuration value.
+
+### `adam config set KEY VALUE`
+Record an Adam configuration value in `adam-pkg.db`.
+
+### `adam db init`
+Initialize Adam state.
+
+### `adam db dump`
+Print `adam-pkg.db`.
+
+### `adam db resync`
+Rebuild Adam's installed-package table from the system pkgdb.
+
+### `adam db path`
+Print the active database path.
+
 ## Notes
 
 - Adam is source-first by default.
 - `pkgin` is optional.
 - `adam-pkg.db` is the authoritative Adam-managed state store.
-
+- Some apt commands have no exact pkgsrc equivalent. Adam provides the closest useful behavior and documents the boundary.

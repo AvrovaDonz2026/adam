@@ -183,7 +183,7 @@ Core commands:
   update, install, remove, purge, upgrade, full-upgrade, autoremove
   search, show, list, depends, rdepends, policy, mark
   build, plan, source, download, build-dep, clean, autoclean
-  check, doctor, stats, dumpavail, pkgnames
+  check, doctor, stats, dumpavail, pkgnames, config, db
 
 Options:
   -y, --yes             assume yes
@@ -511,6 +511,46 @@ db_build_snapshot() {
     snapshot_db
 }
 
+db_dump() {
+    snapshot_db
+    cat "$ADAM_DB_PATH"
+}
+
+db_init() {
+    ensure_state
+    db_add_config ADAM_PKGSRCDIR "$ADAM_PKGSRCDIR"
+    db_add_config ADAM_LOCALBASE "$ADAM_LOCALBASE"
+    db_add_config ADAM_STATE_DIR "$ADAM_STATE_DIR"
+    db_add_config ADAM_DB_PATH "$ADAM_DB_PATH"
+    snapshot_db
+    printf 'initialized %s\n' "$ADAM_DB_PATH"
+}
+
+db_resync_installed() {
+    if ! command -v pkg_info >/dev/null 2>&1; then
+        die "pkg_info unavailable; cannot resync"
+    fi
+    tmp="$(table_path installed).tmp.$$"
+    : > "$tmp"
+    pkg_info 2>/dev/null | while IFS= read -r line; do
+        pkgname=$(printf '%s\n' "$line" | awk '{print $1}')
+        [ -n "$pkgname" ] || continue
+        pkgbase=$(printf '%s\n' "$pkgname" | sed 's/-[0-9][^-]*$//')
+        available=$(db_lookup_available "$pkgbase" || true)
+        if [ -n "$available" ]; then
+            pkgpath=$(pkgmeta_field "$available" 3)
+            version=$(pkgmeta_field "$available" 4)
+        else
+            pkgpath=""
+            version="${pkgname#${pkgbase}-}"
+        fi
+        printf '%s\t%s\t%s\t%s\tinstalled\texternal\t0\t\t%s\t%s\n' \
+            "$pkgbase" "$pkgname" "$pkgpath" "$version" "$(ts_now)" "$(ts_now)" >> "$tmp"
+    done
+    mv "$tmp" "$(table_path installed)"
+    snapshot_db
+}
+
 pkg_info_installed_names() {
     if command -v pkg_info >/dev/null 2>&1; then
         pkg_info 2>/dev/null | awk '{print $1}'
@@ -778,7 +818,14 @@ cmd_remove() {
         else
             run_as_root "pkg_delete '$pkg'" || true
         fi
-        db_remove_installed "$pkg"
+        pkgpath=$(resolve_pkgpath_from_name "$pkg" || true)
+        if [ -n "$pkgpath" ]; then
+            line=$(resolve_pkgmeta "$pkgpath")
+            pkgbase=$(pkgmeta_field "$line" 1)
+        else
+            pkgbase="$pkg"
+        fi
+        db_remove_installed "$pkgbase"
         db_add_transaction "$(now_id)" remove "$pkg" ok "-"
     done
     db_build_snapshot
@@ -824,6 +871,11 @@ cmd_search() {
             printf "%s\t%s\t%s\t%s\n", $1, $2, $3, $4
         }
     ' "$(table_path available)"
+}
+
+cmd_reinstall() {
+    [ "$#" -gt 0 ] || die "reinstall requires at least one package"
+    cmd_install "$@"
 }
 
 cmd_show() {
@@ -897,11 +949,12 @@ cmd_policy() {
 }
 
 cmd_mark() {
-    [ "$#" -ge 2 ] || die "mark requires a subcommand and packages"
+    [ "$#" -ge 1 ] || die "mark requires a subcommand"
     sub="$1"
     shift
     case "$sub" in
         manual|auto|hold|unhold)
+            [ "$#" -gt 0 ] || die "mark $sub requires packages"
             for pkg in "$@"; do
                 pkgpath=$(resolve_pkgpath_from_name "$pkg")
                 line=$(db_lookup_available "$pkgpath")
@@ -921,6 +974,62 @@ cmd_mark() {
             ;;
         *)
             die "unknown mark subcommand: $sub"
+            ;;
+    esac
+}
+
+cmd_config() {
+    sub="${1:-dump}"
+    shift || true
+    case "$sub" in
+        dump)
+            printf 'ADAM_PKGSRCDIR=%s\n' "$ADAM_PKGSRCDIR"
+            printf 'ADAM_LOCALBASE=%s\n' "$ADAM_LOCALBASE"
+            printf 'ADAM_STATE_DIR=%s\n' "$ADAM_STATE_DIR"
+            printf 'ADAM_DB_PATH=%s\n' "$ADAM_DB_PATH"
+            printf 'ADAM_MAKE_CMD=%s\n' "$(pkgsrc_make)"
+            printf 'ADAM_ROOT_CMD=%s\n' "$ADAM_ROOT_CMD"
+            printf 'ADAM_PKGIN_CMD=%s\n' "$ADAM_PKGIN_CMD"
+            ;;
+        get)
+            [ "$#" -eq 1 ] || die "config get requires a key"
+            case "$1" in
+                ADAM_PKGSRCDIR) printf '%s\n' "$ADAM_PKGSRCDIR" ;;
+                ADAM_LOCALBASE) printf '%s\n' "$ADAM_LOCALBASE" ;;
+                ADAM_STATE_DIR) printf '%s\n' "$ADAM_STATE_DIR" ;;
+                ADAM_DB_PATH) printf '%s\n' "$ADAM_DB_PATH" ;;
+                ADAM_MAKE_CMD) printf '%s\n' "$(pkgsrc_make)" ;;
+                ADAM_ROOT_CMD) printf '%s\n' "$ADAM_ROOT_CMD" ;;
+                ADAM_PKGIN_CMD) printf '%s\n' "$ADAM_PKGIN_CMD" ;;
+                *) die "unknown config key: $1" ;;
+            esac
+            ;;
+        set)
+            [ "$#" -eq 2 ] || die "config set requires key and value"
+            db_add_config "$1" "$2"
+            snapshot_db
+            ;;
+        edit)
+            editor="${EDITOR:-vi}"
+            run_cmd "$editor '$ADAM_DB_PATH'"
+            ;;
+        *)
+            die "unknown config command: $sub"
+            ;;
+    esac
+}
+
+cmd_db() {
+    sub="${1:-dump}"
+    shift || true
+    case "$sub" in
+        init) db_init ;;
+        dump) db_dump ;;
+        resync) db_resync_installed ;;
+        path) printf '%s\n' "$ADAM_DB_PATH" ;;
+        tables) find "${ADAM_STATE_DIR}/tables" -maxdepth 1 -type f -print 2>/dev/null || true ;;
+        *)
+            die "unknown db command: $sub"
             ;;
     esac
 }
@@ -1008,6 +1117,7 @@ dispatch() {
     case "$cmd" in
         update) cmd_update "$@" ;;
         install) cmd_install "$@" ;;
+        reinstall) cmd_reinstall "$@" ;;
         remove|rm) cmd_remove "$@" ;;
         purge) cmd_remove "$@" ;;
         upgrade) cmd_upgrade "$@" ;;
@@ -1032,6 +1142,8 @@ dispatch() {
         stats) cmd_stats "$@" ;;
         dumpavail) cmd_dumpavail "$@" ;;
         pkgnames) cmd_pkgnames "$@" ;;
+        config) cmd_config "$@" ;;
+        db) cmd_db "$@" ;;
         edit-sources) cmd_edit_sources "$@" ;;
         *)
             die "unknown command: $cmd"
