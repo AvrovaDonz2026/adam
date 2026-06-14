@@ -409,9 +409,17 @@ collect_pkg_metadata() {
 pkgsrc_scan_index() {
     ensure_pkgsrc_tree
     : > "$pkgsrc_index_tmp"
-    find "$ADAM_PKGSRCDIR" -mindepth 3 -maxdepth 3 -type f -name Makefile | while IFS= read -r mf; do
+    find "$ADAM_PKGSRCDIR" -type f -name Makefile | while IFS= read -r mf; do
         pkgdir=$(dirname "$mf")
         pkgpath=${pkgdir#${ADAM_PKGSRCDIR}/}
+        pkgrel=${pkgpath#*/}
+        case "$pkgpath" in
+            */*) ;;
+            *) continue ;;
+        esac
+        case "$pkgrel" in
+            */*) continue ;;
+        esac
         collect_pkg_metadata "$pkgpath" >> "$pkgsrc_index_tmp" || true
     done
 }
