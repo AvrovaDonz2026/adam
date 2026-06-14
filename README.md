@@ -80,6 +80,7 @@ If Adam and the system pkgdb drift apart, run:
 
 Common commands:
 
+- `help`
 - `update`
 - `install`
 - `remove`

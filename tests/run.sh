@@ -229,6 +229,27 @@ run_edit_sources() {
         edit-sources
 }
 
+HELP_STATE="$WORK/help-state"
+PATH="$BIN:$PATH" "$ROOT/adam" \
+    --pkgsrc "$PKGSRC" \
+    --db "$HELP_STATE/adam-pkg.db" \
+    --make make \
+    --root-cmd none \
+    help > "$WORK/help.out"
+cover help
+assert_contains "$WORK/help.out" "Usage:" "help prints overview"
+[ ! -e "$HELP_STATE" ] || fail "help does not create state"
+
+run_adam help install > "$WORK/help-install.out"
+assert_contains "$WORK/help-install.out" "adam install PKG..." "help install prints install usage"
+run_adam help mark > "$WORK/help-mark.out"
+assert_contains "$WORK/help-mark.out" "manual|auto|hold|unhold" "help mark prints mark subcommands"
+run_adam help rm > "$WORK/help-rm.out"
+assert_contains "$WORK/help-rm.out" "adam remove PKG..." "help rm resolves remove usage"
+assert_fail "unknown help topic fails" run_adam help missing-topic
+assert_contains "$WORK/assert.err" "unknown help topic" "unknown help topic error is clear"
+ok "help command supports overview and command topics"
+
 run_adam update >/dev/null
 cover update
 [ -s "$STATE/tables/available.tsv" ] || fail "update creates available index"
@@ -617,7 +638,7 @@ run_adam_alt update >/dev/null
 run_adam_alt --dry-run satisfy 'app>=1.0' >/dev/null
 ok "alternate state can satisfy dependency expressions"
 
-EXPECTED_COMMANDS="update install reinstall remove rm purge upgrade full-upgrade dist-upgrade autoremove search show list depends rdepends policy mark build plan source download build-dep satisfy indextargets changelog madison audit options make clean autoclean check doctor stats dumpavail pkgnames config db edit-sources"
+EXPECTED_COMMANDS="help update install reinstall remove rm purge upgrade full-upgrade dist-upgrade autoremove search show list depends rdepends policy mark build plan source download build-dep satisfy indextargets changelog madison audit options make clean autoclean check doctor stats dumpavail pkgnames config db edit-sources"
 for cmd in $EXPECTED_COMMANDS; do
     [ -f "$COVERED/$cmd" ] || fail "missing command coverage: $cmd"
 done

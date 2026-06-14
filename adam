@@ -186,11 +186,11 @@ Usage:
   adam [options] <command> [args...]
 
 Core commands:
-  update, install, remove, purge, upgrade, full-upgrade, autoremove
+  help, update, install, remove, purge, upgrade, full-upgrade, autoremove
   search, show, list, depends, rdepends, policy, mark
   build, plan, source, download, build-dep, clean, autoclean
   check, doctor, stats, dumpavail, pkgnames, config, db
-  satisfy, indextargets, changelog, madison, audit, options, make
+  satisfy, indextargets, changelog, madison, audit, options, make, edit-sources
 
 Options:
   -y, --yes             assume yes
@@ -208,6 +208,340 @@ Options:
       --pkgin-cmd CMD
       --config FILE
 EOF
+}
+
+cmd_help() {
+    topic="${1:-}"
+    if [ -z "$topic" ]; then
+        show_help
+        return 0
+    fi
+
+    case "$topic" in
+        rm) topic=remove ;;
+        dist-upgrade) topic=full-upgrade ;;
+    esac
+
+    case "$topic" in
+        help)
+            cat <<'EOF'
+Usage:
+  adam help [COMMAND]
+
+Show Adam help. With COMMAND, show command-specific usage.
+EOF
+            ;;
+        update)
+            cat <<'EOF'
+Usage:
+  adam update
+
+Refresh Adam's pkgsrc package index.
+EOF
+            ;;
+        install)
+            cat <<'EOF'
+Usage:
+  adam install PKG...
+
+Install packages from pkgsrc by default. Requested packages are marked manual; dependencies are marked automatic.
+EOF
+            ;;
+        reinstall)
+            cat <<'EOF'
+Usage:
+  adam reinstall PKG...
+
+Reinstall packages using the current backend.
+EOF
+            ;;
+        remove)
+            cat <<'EOF'
+Usage:
+  adam remove PKG...
+  adam rm PKG...
+
+Remove packages and Adam-managed installed state.
+EOF
+            ;;
+        purge)
+            cat <<'EOF'
+Usage:
+  adam purge PKG...
+
+Remove packages using the removal path. pkgsrc-owned application configuration cleanup is limited by pkgsrc metadata.
+EOF
+            ;;
+        upgrade)
+            cat <<'EOF'
+Usage:
+  adam upgrade
+
+Reinstall installed packages from pkgsrc, or delegate to pkgin in binary mode.
+EOF
+            ;;
+        full-upgrade)
+            cat <<'EOF'
+Usage:
+  adam full-upgrade
+  adam dist-upgrade
+
+Run Adam's full upgrade path. In this version it aliases upgrade.
+EOF
+            ;;
+        autoremove)
+            cat <<'EOF'
+Usage:
+  adam autoremove
+
+Conservatively remove Adam-managed automatic packages no longer reachable from installed manual roots.
+EOF
+            ;;
+        search)
+            cat <<'EOF'
+Usage:
+  adam search PATTERN
+
+Search available package metadata.
+EOF
+            ;;
+        show)
+            cat <<'EOF'
+Usage:
+  adam show PKG...
+
+Show available package metadata.
+EOF
+            ;;
+        list)
+            cat <<'EOF'
+Usage:
+  adam list [--installed|--all-versions|--upgradeable]
+
+List installed packages, available packages, or upgrade candidates.
+EOF
+            ;;
+        depends)
+            cat <<'EOF'
+Usage:
+  adam depends PKG
+
+Show direct pkgsrc build and run dependencies.
+EOF
+            ;;
+        rdepends)
+            cat <<'EOF'
+Usage:
+  adam rdepends PKG
+
+Show packages whose pkgsrc dependency metadata references PKG.
+EOF
+            ;;
+        policy)
+            cat <<'EOF'
+Usage:
+  adam policy PKG
+
+Show installed and candidate package information.
+EOF
+            ;;
+        mark)
+            cat <<'EOF'
+Usage:
+  adam mark manual|auto|hold|unhold PKG...
+  adam mark showmanual|showauto|showhold
+  adam mark minimize-manual
+
+Change or inspect manual, automatic, and hold marks.
+EOF
+            ;;
+        build)
+            cat <<'EOF'
+Usage:
+  adam build PKG...
+
+Build pkgsrc packages with the package target without installing them.
+EOF
+            ;;
+        plan)
+            cat <<'EOF'
+Usage:
+  adam plan PKG...
+
+Print dependency-first pkgsrc build order.
+EOF
+            ;;
+        source)
+            cat <<'EOF'
+Usage:
+  adam source PKG...
+
+Print pkgsrc source directories.
+EOF
+            ;;
+        download)
+            cat <<'EOF'
+Usage:
+  adam download PKG...
+
+Fetch package distfiles with pkgsrc make fetch, or delegate to pkgin in binary mode.
+EOF
+            ;;
+        build-dep)
+            cat <<'EOF'
+Usage:
+  adam build-dep PKG...
+
+Print build dependency package paths.
+EOF
+            ;;
+        satisfy)
+            cat <<'EOF'
+Usage:
+  adam satisfy EXPR...
+
+Install packages parsed from simple dependency expressions.
+EOF
+            ;;
+        indextargets)
+            cat <<'EOF'
+Usage:
+  adam indextargets
+
+Print Adam index and state paths.
+EOF
+            ;;
+        changelog)
+            cat <<'EOF'
+Usage:
+  adam changelog PKG
+
+Search pkgsrc doc changelog entries for a package name.
+EOF
+            ;;
+        madison)
+            cat <<'EOF'
+Usage:
+  adam madison PKG...
+
+Show source version information.
+EOF
+            ;;
+        audit)
+            cat <<'EOF'
+Usage:
+  adam audit
+
+Run pkg_admin audit when available.
+EOF
+            ;;
+        options)
+            cat <<'EOF'
+Usage:
+  adam options PKG
+
+Run pkgsrc make show-options for a package.
+EOF
+            ;;
+        make)
+            cat <<'EOF'
+Usage:
+  adam make PKG TARGET...
+
+Run a pkgsrc make target in a package directory.
+EOF
+            ;;
+        clean)
+            cat <<'EOF'
+Usage:
+  adam clean
+
+Remove Adam local plan scratch data.
+EOF
+            ;;
+        autoclean)
+            cat <<'EOF'
+Usage:
+  adam autoclean
+
+Remove stale Adam state scratch files.
+EOF
+            ;;
+        check)
+            cat <<'EOF'
+Usage:
+  adam check [--repair]
+
+Compare Adam state with the system package database, or refresh the index with --repair.
+EOF
+            ;;
+        doctor)
+            cat <<'EOF'
+Usage:
+  adam doctor
+
+Print local Adam environment diagnostics.
+EOF
+            ;;
+        stats)
+            cat <<'EOF'
+Usage:
+  adam stats
+
+Print installed and available package counts.
+EOF
+            ;;
+        dumpavail)
+            cat <<'EOF'
+Usage:
+  adam dumpavail
+
+Print the available package table.
+EOF
+            ;;
+        pkgnames)
+            cat <<'EOF'
+Usage:
+  adam pkgnames [PREFIX]
+
+Print available package names, optionally filtered by prefix.
+EOF
+            ;;
+        config)
+            cat <<'EOF'
+Usage:
+  adam config dump
+  adam config get KEY
+  adam config set KEY VALUE
+  adam config edit
+
+Inspect or update Adam configuration values.
+EOF
+            ;;
+        db)
+            cat <<'EOF'
+Usage:
+  adam db init
+  adam db dump
+  adam db resync
+  adam db path
+  adam db tables
+
+Inspect or rebuild Adam's package database.
+EOF
+            ;;
+        edit-sources)
+            cat <<'EOF'
+Usage:
+  adam edit-sources
+
+Open the active Adam config file in $EDITOR, creating a template when absent.
+EOF
+            ;;
+        *)
+            die "unknown help topic: $topic"
+            ;;
+    esac
 }
 
 cmdv() {
@@ -1429,6 +1763,7 @@ dispatch() {
     [ -n "$cmd" ] || { show_help; exit 1; }
     shift || true
     case "$cmd" in
+        help) cmd_help "$@" ;;
         update) cmd_update "$@" ;;
         install) cmd_install "$@" ;;
         reinstall) cmd_reinstall "$@" ;;
@@ -1482,6 +1817,16 @@ main() {
     parse_args "$@"
     config_default
     normalize_paths
+    case "${ADAM_ARGS%% *}" in
+        help)
+            dispatch ${ADAM_ARGS}
+            exit 0
+            ;;
+        "")
+            show_help
+            exit 1
+            ;;
+    esac
     ensure_state
     dispatch ${ADAM_ARGS}
     db_build_snapshot

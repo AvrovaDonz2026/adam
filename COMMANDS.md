@@ -2,6 +2,9 @@
 
 ## apt-style commands
 
+### `adam help [COMMAND]`
+Show Adam command help. Without a command, it prints the command overview.
+
 ### `adam update`
 Refresh package index data.
 
