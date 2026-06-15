@@ -89,7 +89,7 @@ jobs:
             bootstrap: privileged
             make: /usr/pkg/bin/bmake
             build_root: "1"
-            test_pkg: www/curl
+            test_pkg: devel/pcre2
     steps:
       - name: Checkout
         uses: actions/checkout@v5

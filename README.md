@@ -141,7 +141,7 @@ sh tests/run.sh
 
 The test suite uses fake tools and a fake pkgsrc tree. It covers every current public Adam command and failure paths.
 
-CI runs the fake-tool suite on Ubuntu and macOS, then runs the same suite inside the real pkgsrc integration script. The integration jobs download stable pkgsrc and install, inspect, remove, and autoremove complex packages from source on every push and pull request: `devel/git-base` on Linux, macOS, and NetBSD, and `www/curl` on OpenBSD. Linux and macOS use unprivileged pkgsrc bootstrap under the runner temp directory; NetBSD uses the native pkgsrc toolchain; OpenBSD bootstraps privileged pkgsrc under `/usr/pkg`.
+CI runs the fake-tool suite on Ubuntu and macOS, then runs the same suite inside the real pkgsrc integration script. The integration jobs download stable pkgsrc and install, inspect, remove, and autoremove complex packages from source on every push and pull request: `devel/git-base` on Linux, macOS, and NetBSD, and `devel/pcre2` on OpenBSD. Linux and macOS use unprivileged pkgsrc bootstrap under the runner temp directory; NetBSD uses the native pkgsrc toolchain; OpenBSD bootstraps privileged pkgsrc under `/usr/pkg`.
 
 ## More Documentation
 

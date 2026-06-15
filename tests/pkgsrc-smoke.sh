@@ -167,8 +167,34 @@ bootstrap_pkgsrc() {
 
 activate_pkgsrc_prefix() {
     if [ -n "$PKGSRC_PREFIX" ]; then
-        PATH="$PKGSRC_PREFIX/bin:$PKGSRC_PREFIX/sbin:$PATH"
-        export PATH
+        PATH="$PKGSRC_PREFIX/bin:$PKGSRC_PREFIX/sbin:/usr/pkg/bin:/usr/pkg/sbin:/usr/sbin:/sbin:$PATH"
+    else
+        PATH="/usr/pkg/bin:/usr/pkg/sbin:/usr/sbin:/sbin:$PATH"
+    fi
+    export PATH
+}
+
+pkgsrc_pkgdb_dir() {
+    if [ -n "$PKGSRC_PKGDBDIR" ]; then
+        printf '%s\n' "$PKGSRC_PKGDBDIR"
+        return 0
+    fi
+
+    makecmd=$(adam_make_cmd)
+    if [ -d "$PKGSRC_DIR/$TEST_PKG" ]; then
+        (
+            cd "$PKGSRC_DIR/$TEST_PKG"
+            $makecmd -V PKG_DBDIR 2>/dev/null || true
+        )
+    fi
+}
+
+activate_pkgsrc_pkgdb() {
+    pkgdb_dir=$(pkgsrc_pkgdb_dir)
+    if [ -n "$pkgdb_dir" ]; then
+        PKG_DBDIR="$pkgdb_dir"
+        export PKG_DBDIR
+        printf 'using pkgdb dir: %s\n' "$PKG_DBDIR"
     fi
 }
 
@@ -207,12 +233,21 @@ run_adam() {
 run_adam_as_root() {
     makecmd=$(adam_make_cmd)
     sucmd=$(pkgsrc_su_cmd) || fail "passwordless doas or sudo is required"
-    root_exec env PATH="$PATH" SU_CMD="$sucmd" "$ROOT/adam" \
-        --pkgsrc "$PKGSRC_DIR" \
-        --db "$STATE_DIR/adam-root-pkg.db" \
-        --make "$makecmd" \
-        --root-cmd none \
-        "$@"
+    if [ -n "${PKG_DBDIR:-}" ]; then
+        root_exec env PATH="$PATH" PKG_DBDIR="$PKG_DBDIR" SU_CMD="$sucmd" "$ROOT/adam" \
+            --pkgsrc "$PKGSRC_DIR" \
+            --db "$STATE_DIR/adam-root-pkg.db" \
+            --make "$makecmd" \
+            --root-cmd none \
+            "$@"
+    else
+        root_exec env PATH="$PATH" SU_CMD="$sucmd" "$ROOT/adam" \
+            --pkgsrc "$PKGSRC_DIR" \
+            --db "$STATE_DIR/adam-root-pkg.db" \
+            --make "$makecmd" \
+            --root-cmd none \
+            "$@"
+    fi
 }
 
 run_adam_real() {
@@ -304,6 +339,7 @@ mkdir -p "$STATE_DIR"
 show_disk_space
 bootstrap_pkgsrc
 activate_pkgsrc_prefix
+activate_pkgsrc_pkgdb
 show_make_cmd
 
 sh -n "$ROOT/adam"
