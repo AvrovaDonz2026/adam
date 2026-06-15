@@ -174,18 +174,42 @@ activate_pkgsrc_prefix() {
     export PATH
 }
 
+pkgsrc_make_var() {
+    var="$1"
+    makecmd=$(adam_make_cmd)
+    if [ -d "$PKGSRC_DIR/$TEST_PKG" ]; then
+        (
+            cd "$PKGSRC_DIR/$TEST_PKG"
+            $makecmd -V "$var" 2>/dev/null || true
+        )
+    fi
+}
+
+expand_pkgsrc_path() {
+    path="$1"
+    [ -n "$path" ] || return 0
+    localbase=$(pkgsrc_make_var LOCALBASE)
+    varbase=$(pkgsrc_make_var VARBASE)
+    [ -n "$localbase" ] || localbase="${PKGSRC_PREFIX:-/usr/pkg}"
+    [ -n "$varbase" ] || varbase="${localbase}/var"
+    expanded=$(printf '%s\n' "$path" | sed \
+        -e "s#\\\${LOCALBASE}#$localbase#g" \
+        -e "s#\\\${VARBASE}#$varbase#g")
+    case "$expanded" in
+        *'$'*|*'{'*|*'}'*) return 1 ;;
+    esac
+    printf '%s\n' "$expanded"
+}
+
 pkgsrc_pkgdb_dir() {
     if [ -n "$PKGSRC_PKGDBDIR" ]; then
         printf '%s\n' "$PKGSRC_PKGDBDIR"
         return 0
     fi
 
-    makecmd=$(adam_make_cmd)
-    if [ -d "$PKGSRC_DIR/$TEST_PKG" ]; then
-        (
-            cd "$PKGSRC_DIR/$TEST_PKG"
-            $makecmd -V PKG_DBDIR 2>/dev/null || true
-        )
+    raw=$(pkgsrc_make_var PKG_DBDIR)
+    if [ -n "$raw" ]; then
+        expand_pkgsrc_path "$raw" || true
     fi
 }
 
@@ -260,7 +284,11 @@ run_adam_real() {
 
 pkg_info_has() {
     pkgbase="$1"
-    pkg_info 2>/dev/null | awk -v p="$pkgbase" '
+    if [ -n "${PKG_DBDIR:-}" ]; then
+        pkg_info -K "$PKG_DBDIR" 2>/dev/null
+    else
+        pkg_info 2>/dev/null
+    fi | awk -v p="$pkgbase" '
         $1 == p || $1 ~ ("^" p "-") { found = 1 }
         END { exit found ? 0 : 1 }
     '
