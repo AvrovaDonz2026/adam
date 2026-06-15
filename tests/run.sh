@@ -93,7 +93,7 @@ transaction_count() {
 }
 
 mkdir -p "$BIN" "$NO_ADMIN_BIN" "$STATE" "$ALT_STATE" "$COVERED"
-mkdir -p "$PKGSRC/category/dep" "$PKGSRC/category/app" "$PKGSRC/category/rev" "$PKGSRC/category/old" "$PKGSRC/doc"
+mkdir -p "$PKGSRC/category/dep" "$PKGSRC/category/app" "$PKGSRC/category/rev" "$PKGSRC/category/old" "$PKGSRC/category/exprbase" "$PKGSRC/doc"
 ln -s "$PKGSRC" "$LINKED_PKGSRC"
 : > "$LOG"
 
@@ -132,6 +132,13 @@ case "$1" in
             old:CATEGORIES) echo category ;;
             old:BUILD_DEPENDS) echo ;;
             old:RUN_DEPENDS) echo ;;
+            exprbase:PKGNAME) echo exprbase-2.0nb1 ;;
+            exprbase:PKGBASE) echo '${PKGNAME:C/-[^-]*$//}' ;;
+            exprbase:COMMENT) echo expression pkgbase package ;;
+            exprbase:LICENSE) echo mit ;;
+            exprbase:CATEGORIES) echo category ;;
+            exprbase:BUILD_DEPENDS) echo ;;
+            exprbase:RUN_DEPENDS) echo ;;
             *) echo ;;
         esac
         ;;
@@ -180,7 +187,7 @@ exit 0
 EOF
 chmod +x "$BIN/pkg_admin"
 
-for pkg in dep app rev old; do
+for pkg in dep app rev old exprbase; do
     touch "$PKGSRC/category/$pkg/Makefile"
 done
 cat > "$PKGSRC/doc/CHANGES-test" <<'EOF'
@@ -305,6 +312,12 @@ assert_contains "$LOG" "category/app install" "source install runs target instal
 awk -F '\t' '$1 == "dep" && $7 == "1" { found = 1 } END { exit found ? 0 : 1 }' "$STATE/tables/installed.tsv" || fail "dependency is recorded automatic"
 awk -F '\t' '$1 == "app" && $7 == "0" { found = 1 } END { exit found ? 0 : 1 }' "$STATE/tables/installed.tsv" || fail "requested package is recorded manual"
 ok "source install records dependency-first commands"
+
+run_adam install exprbase >/dev/null
+assert_contains "$LOG" "category/exprbase install" "expression pkgbase package builds"
+awk -F '\t' '$1 == "exprbase" && $2 == "exprbase-2.0nb1" { found = 1 } END { exit found ? 0 : 1 }' "$STATE/tables/installed.tsv" || fail "expression pkgbase resolves through PKGNAME"
+run_adam remove exprbase >/dev/null
+ok "expression PKGBASE metadata resolves through PKGNAME"
 
 run_adam reinstall app >/dev/null
 cover reinstall

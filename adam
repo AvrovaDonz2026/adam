@@ -697,6 +697,37 @@ sanitize_pkgpath() {
     printf '%s' "$1" | sed 's#^\./##; s#^//##'
 }
 
+literal_pkgbase() {
+    case "$1" in
+        ''|*'$'*|*'{'*|*'}'*|*':'*|*'/'*|*' '*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+pkgname_to_pkgbase() {
+    pkgname="$1"
+    fallback="${2:-}"
+    derived=$(printf '%s\n' "$pkgname" | sed 's/-[0-9][^-]*$//')
+    if [ -n "$pkgname" ] && [ "$derived" != "$pkgname" ]; then
+        printf '%s' "$derived"
+    elif literal_pkgbase "$fallback"; then
+        printf '%s' "$fallback"
+    elif [ -n "$pkgname" ]; then
+        printf '%s' "$pkgname"
+    else
+        printf '%s' "$fallback"
+    fi
+}
+
+pkgname_to_version() {
+    pkgname="$1"
+    pkgbase="$2"
+    case "$pkgname" in
+        "$pkgbase"-*) printf '%s' "${pkgname#"$pkgbase"-}" ;;
+        *) printf '%s' "$pkgname" ;;
+    esac
+}
+
 pkgsrc_index_tmp="${TMPDIR:-/tmp}/adam-index.$$"
 
 collect_pkg_metadata() {
@@ -707,14 +738,14 @@ collect_pkg_metadata() {
     (
         cd "$pkgdir"
         pkgname=$($makecmd -V PKGNAME 2>/dev/null || true)
-        pkgbase=$($makecmd -V PKGBASE 2>/dev/null || true)
+        raw_pkgbase=$($makecmd -V PKGBASE 2>/dev/null || true)
+        pkgbase=$(pkgname_to_pkgbase "$pkgname" "$raw_pkgbase")
         comment=$($makecmd -V COMMENT 2>/dev/null || true)
         license=$($makecmd -V LICENSE 2>/dev/null || true)
         categories=$($makecmd -V CATEGORIES 2>/dev/null || true)
         build_depends=$($makecmd -V BUILD_DEPENDS 2>/dev/null || true)
         run_depends=$($makecmd -V RUN_DEPENDS 2>/dev/null || true)
-        version=${pkgname#${pkgbase}-}
-        [ "$pkgname" = "$version" ] && version=$pkgname
+        version=$(pkgname_to_version "$pkgname" "$pkgbase")
         build_paths=$(printf '%s\n' "$build_depends" | awk -F: 'NF>1 {print $NF}' | sed '/^$/d' | while IFS= read -r dep; do
             dep_path=$(cd "$pkgdir" && cd "$dep" 2>/dev/null && pwd || true)
             if [ -n "$dep_path" ]; then

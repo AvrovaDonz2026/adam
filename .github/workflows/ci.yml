@@ -89,6 +89,7 @@ jobs:
             bootstrap: privileged
             make: /usr/pkg/bin/bmake
             build_root: "1"
+            test_pkg: www/curl
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -103,7 +104,7 @@ jobs:
           STATE_DIR: /home/runner/work/adam-pkgsrc-state
           ADAM_TEST_MAKE_CMD: ${{ matrix.os.make }}
           ADAM_TEST_BUILD_ROOT: ${{ matrix.os.build_root }}
-          TEST_PKG: devel/git-base
+          TEST_PKG: ${{ matrix.os.test_pkg || 'devel/git-base' }}
         with:
           operating_system: ${{ matrix.os.name }}
           version: ${{ matrix.os.version }}
@@ -120,7 +121,7 @@ jobs:
           STATE_DIR: /home/runner/work/adam-pkgsrc-state
           ADAM_TEST_MAKE_CMD: ${{ matrix.os.make }}
           ADAM_TEST_BUILD_ROOT: ${{ matrix.os.build_root }}
-          TEST_PKG: devel/git-base
+          TEST_PKG: ${{ matrix.os.test_pkg || 'devel/git-base' }}
         run: |
           uname -a
           sh tests/pkgsrc-smoke.sh lifecycle
