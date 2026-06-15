@@ -99,8 +99,8 @@ jobs:
         uses: cross-platform-actions/action@v1.2.0
         env:
           PKGSRC_BOOTSTRAP: ${{ matrix.os.bootstrap }}
-          PKGSRC_DIR: /tmp/pkgsrc
-          STATE_DIR: /tmp/adam-pkgsrc-state
+          PKGSRC_DIR: /home/runner/work/pkgsrc
+          STATE_DIR: /home/runner/work/adam-pkgsrc-state
           ADAM_TEST_MAKE_CMD: ${{ matrix.os.make }}
           ADAM_TEST_BUILD_ROOT: ${{ matrix.os.build_root }}
           TEST_PKG: devel/git-base
@@ -116,8 +116,8 @@ jobs:
       - name: Install, test, and remove complex pkgsrc package on ${{ matrix.os.name }}
         env:
           PKGSRC_BOOTSTRAP: ${{ matrix.os.bootstrap }}
-          PKGSRC_DIR: /tmp/pkgsrc
-          STATE_DIR: /tmp/adam-pkgsrc-state
+          PKGSRC_DIR: /home/runner/work/pkgsrc
+          STATE_DIR: /home/runner/work/adam-pkgsrc-state
           ADAM_TEST_MAKE_CMD: ${{ matrix.os.make }}
           ADAM_TEST_BUILD_ROOT: ${{ matrix.os.build_root }}
           TEST_PKG: devel/git-base

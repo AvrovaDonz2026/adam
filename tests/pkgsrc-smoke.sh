@@ -63,18 +63,28 @@ ensure_pkgsrc() {
         return 0
     fi
 
-    archive="/tmp/pkgsrc.tarball"
-    rm -rf "$PKGSRC_DIR" /tmp/pkgsrc
+    pkgsrc_parent=$(dirname "$PKGSRC_DIR")
+    archive="${pkgsrc_parent}/pkgsrc.tarball"
+    extract_parent="${pkgsrc_parent}/pkgsrc-extract.$$"
+
+    mkdir -p "$pkgsrc_parent"
+    rm -rf "$PKGSRC_DIR" "$extract_parent"
+    mkdir -p "$extract_parent"
     fetch_file "$PKGSRC_TARBALL" "$archive"
     case "$PKGSRC_TARBALL" in
-        *.tar.xz) tar -C /tmp -xJf "$archive" ;;
-        *.tar.gz|*.tgz) tar -C /tmp -xzf "$archive" ;;
-        *) tar -C /tmp -xf "$archive" ;;
+        *.tar.xz) tar -C "$extract_parent" -xJf "$archive" ;;
+        *.tar.gz|*.tgz) tar -C "$extract_parent" -xzf "$archive" ;;
+        *) tar -C "$extract_parent" -xf "$archive" ;;
     esac
-    [ -d /tmp/pkgsrc ] || fail "pkgsrc archive did not extract to /tmp/pkgsrc"
-    if [ "$PKGSRC_DIR" != /tmp/pkgsrc ]; then
-        mv /tmp/pkgsrc "$PKGSRC_DIR"
-    fi
+    [ -d "$extract_parent/pkgsrc" ] || fail "pkgsrc archive did not extract to $extract_parent/pkgsrc"
+    mv "$extract_parent/pkgsrc" "$PKGSRC_DIR"
+    rm -rf "$extract_parent" "$archive"
+}
+
+show_disk_space() {
+    printf 'pkgsrc dir: %s\n' "$PKGSRC_DIR"
+    printf 'state dir: %s\n' "$STATE_DIR"
+    df -h "$PKGSRC_DIR" "$(dirname "$STATE_DIR")" /tmp 2>/dev/null || df -h
 }
 
 root_exec() {
@@ -290,6 +300,8 @@ run_lifecycle() {
 }
 
 ensure_pkgsrc
+mkdir -p "$STATE_DIR"
+show_disk_space
 bootstrap_pkgsrc
 activate_pkgsrc_prefix
 show_make_cmd
