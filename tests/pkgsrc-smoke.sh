@@ -47,15 +47,22 @@ ok() {
 fetch_file() {
     url=$1
     out=$2
-    if command -v ftp >/dev/null 2>&1; then
-        ftp -o "$out" "$url"
-    elif command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$url" -o "$out"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -O "$out" "$url"
-    else
-        fail "no fetch tool found"
-    fi
+    attempts=0
+    while [ "$attempts" -lt 5 ]; do
+        attempts=$((attempts + 1))
+        if command -v ftp >/dev/null 2>&1; then
+            ftp -o "$out" "$url" && return 0
+        elif command -v curl >/dev/null 2>&1; then
+            curl -fsSL "$url" -o "$out" && return 0
+        elif command -v wget >/dev/null 2>&1; then
+            wget -O "$out" "$url" && return 0
+        else
+            fail "no fetch tool found"
+        fi
+        rm -f "$out"
+        [ "$attempts" -lt 5 ] || return 1
+        sleep $((attempts * 5))
+    done
 }
 
 ensure_pkgsrc() {
@@ -285,7 +292,7 @@ run_adam_real() {
 pkg_info_has() {
     pkgbase="$1"
     if [ -n "${PKG_DBDIR:-}" ]; then
-        pkg_info -K "$PKG_DBDIR" 2>/dev/null
+        PKG_DBDIR="$PKG_DBDIR" pkg_info 2>/dev/null
     else
         pkg_info 2>/dev/null
     fi | awk -v p="$pkgbase" '

@@ -93,7 +93,7 @@ transaction_count() {
 }
 
 mkdir -p "$BIN" "$NO_ADMIN_BIN" "$STATE" "$ALT_STATE" "$COVERED"
-mkdir -p "$PKGSRC/category/dep" "$PKGSRC/category/app" "$PKGSRC/category/rev" "$PKGSRC/category/old" "$PKGSRC/category/exprbase" "$PKGSRC/doc"
+mkdir -p "$PKGSRC/category/dep" "$PKGSRC/category/app" "$PKGSRC/category/rev" "$PKGSRC/category/old" "$PKGSRC/category/exprbase" "$PKGSRC/category/gmake" "$PKGSRC/doc"
 ln -s "$PKGSRC" "$LINKED_PKGSRC"
 : > "$LOG"
 
@@ -139,6 +139,14 @@ case "$1" in
             exprbase:CATEGORIES) echo category ;;
             exprbase:BUILD_DEPENDS) echo ;;
             exprbase:RUN_DEPENDS) echo ;;
+            gmake:PKGNAME) echo 'g${DISTNAME}' ;;
+            gmake:DISTNAME) echo make-4.4.1 ;;
+            gmake:PKGBASE) echo 'g${DISTNAME:C/-[^-]*$//}' ;;
+            gmake:COMMENT) echo gmake package with expanded PKGNAME ;;
+            gmake:LICENSE) echo mit ;;
+            gmake:CATEGORIES) echo category ;;
+            gmake:BUILD_DEPENDS) echo ;;
+            gmake:RUN_DEPENDS) echo ;;
             *) echo ;;
         esac
         ;;
@@ -187,7 +195,7 @@ exit 0
 EOF
 chmod +x "$BIN/pkg_admin"
 
-for pkg in dep app rev old exprbase; do
+for pkg in dep app rev old exprbase gmake; do
     touch "$PKGSRC/category/$pkg/Makefile"
 done
 cat > "$PKGSRC/doc/CHANGES-test" <<'EOF'
@@ -284,6 +292,7 @@ ok "help command supports overview and command topics"
 run_adam update >/dev/null
 cover update
 [ -s "$STATE/tables/available.tsv" ] || fail "update creates available index"
+awk -F '\t' '$1 == "gmake" && $2 == "gmake-4.4.1" && $4 == "4.4.1" { found = 1 } END { exit found ? 0 : 1 }' "$STATE/tables/available.tsv" || fail "simple variable expansion resolves gmake metadata"
 ok "update creates available index"
 
 plan=$(run_adam plan app)
@@ -318,6 +327,14 @@ assert_contains "$LOG" "category/exprbase install" "expression pkgbase package b
 awk -F '\t' '$1 == "exprbase" && $2 == "exprbase-2.0nb1" { found = 1 } END { exit found ? 0 : 1 }' "$STATE/tables/installed.tsv" || fail "expression pkgbase resolves through PKGNAME"
 run_adam remove exprbase >/dev/null
 ok "expression PKGBASE metadata resolves through PKGNAME"
+
+run_adam install gmake >/dev/null
+assert_contains "$LOG" "category/gmake install" "gmake package builds"
+awk -F '\t' '$1 == "gmake" && $2 == "gmake-4.4.1" && $4 == "4.4.1" { found = 1 } END { exit found ? 0 : 1 }' "$STATE/tables/installed.tsv" || fail "gmake PKGNAME expands DISTNAME"
+run_adam show gmake > "$WORK/show-gmake.out"
+assert_contains "$WORK/show-gmake.out" "Package: gmake-4.4.1" "show renders expanded gmake metadata"
+run_adam remove gmake >/dev/null
+ok "simple make variable expansion resolves pkgname metadata"
 
 run_adam reinstall app >/dev/null
 cover reinstall

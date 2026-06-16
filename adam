@@ -728,6 +728,48 @@ pkgname_to_version() {
     esac
 }
 
+simple_make_var_names() {
+    printf '%s\n' "$1" | awk '
+        {
+            rest = $0
+            while (match(rest, /\$\{[A-Za-z_][A-Za-z0-9_]*\}/)) {
+                name = substr(rest, RSTART + 2, RLENGTH - 3)
+                if (!seen[name]++) print name
+                rest = substr(rest, RSTART + RLENGTH)
+            }
+        }
+    '
+}
+
+sed_replacement_escape() {
+    printf '%s' "$1" | sed 's/[#&]/\\&/g'
+}
+
+expand_simple_make_vars() {
+    value="$1"
+    makecmd="$2"
+    expanded="$value"
+    pass=0
+    while [ "$pass" -lt 5 ]; do
+        pass=$((pass + 1))
+        names=$(simple_make_var_names "$expanded")
+        [ -n "$names" ] || break
+        changed=0
+        for name in $names; do
+            replacement=$($makecmd -V "$name" 2>/dev/null || true)
+            [ -n "$replacement" ] || continue
+            escaped=$(sed_replacement_escape "$replacement")
+            next=$(printf '%s' "$expanded" | sed "s#\\\${$name}#$escaped#g")
+            if [ "$next" != "$expanded" ]; then
+                expanded="$next"
+                changed=1
+            fi
+        done
+        [ "$changed" -eq 1 ] || break
+    done
+    printf '%s' "$expanded"
+}
+
 pkgsrc_index_tmp="${TMPDIR:-/tmp}/adam-index.$$"
 
 collect_pkg_metadata() {
@@ -738,7 +780,9 @@ collect_pkg_metadata() {
     (
         cd "$pkgdir"
         pkgname=$($makecmd -V PKGNAME 2>/dev/null || true)
+        pkgname=$(expand_simple_make_vars "$pkgname" "$makecmd")
         raw_pkgbase=$($makecmd -V PKGBASE 2>/dev/null || true)
+        raw_pkgbase=$(expand_simple_make_vars "$raw_pkgbase" "$makecmd")
         pkgbase=$(pkgname_to_pkgbase "$pkgname" "$raw_pkgbase")
         comment=$($makecmd -V COMMENT 2>/dev/null || true)
         license=$($makecmd -V LICENSE 2>/dev/null || true)
