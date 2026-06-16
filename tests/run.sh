@@ -94,7 +94,10 @@ transaction_count() {
 
 mkdir -p "$BIN" "$NO_ADMIN_BIN" "$STATE" "$ALT_STATE" "$COVERED"
 mkdir -p "$PKGSRC/category/dep" "$PKGSRC/category/app" "$PKGSRC/category/rev" "$PKGSRC/category/old" "$PKGSRC/category/exprbase" "$PKGSRC/category/gmake" "$PKGSRC/doc"
-ln -s "$PKGSRC" "$LINKED_PKGSRC"
+HAS_SYMLINKED_PKGSRCDIR=0
+if ln -s "$PKGSRC" "$LINKED_PKGSRC" 2>/dev/null && [ -d "$LINKED_PKGSRC" ]; then
+    HAS_SYMLINKED_PKGSRCDIR=1
+fi
 : > "$LOG"
 
 cat > "$BIN/make" <<'EOF'
@@ -301,10 +304,14 @@ expected=$(printf 'category/dep\ncategory/app')
 assert_eq "$expected" "$plan" "plan orders dependencies before target"
 ok "plan orders dependencies before target"
 
-run_adam_linked_pkgsrc update >/dev/null
-linked_plan=$(run_adam_linked_pkgsrc plan app)
-assert_eq "$expected" "$linked_plan" "plan works with symlinked pkgsrc root"
-ok "plan works with symlinked pkgsrc root"
+if [ "$HAS_SYMLINKED_PKGSRCDIR" -eq 1 ]; then
+    run_adam_linked_pkgsrc update >/dev/null
+    linked_plan=$(run_adam_linked_pkgsrc plan app)
+    assert_eq "$expected" "$linked_plan" "plan works with symlinked pkgsrc root"
+    ok "plan works with symlinked pkgsrc root"
+else
+    ok "symlinked pkgsrc root test skipped because symlinks are unavailable"
+fi
 
 tx_before=$(transaction_count)
 run_adam --dry-run install app > "$WORK/dryrun.out"
