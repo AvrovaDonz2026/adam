@@ -17,57 +17,215 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  shell-tests:
-    name: Shell tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+  command-suite-native:
+    name: Command suite (${{ matrix.name }})
+    runs-on: ${{ matrix.runs_on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runs_on: ubuntu-24.04
+            msys2: "0"
+          - name: linux-arm64
+            runs_on: ubuntu-24.04-arm
+            msys2: "0"
+          - name: macos-x64
+            runs_on: macos-15-intel
+            msys2: "0"
+          - name: macos-arm64
+            runs_on: macos-15
+            msys2: "0"
+          - name: windows-msys2
+            runs_on: windows-2022
+            msys2: "1"
+    steps:
+      - name: Disable Windows line-ending conversion
+        if: ${{ matrix.msys2 == '1' }}
+        run: git config --global core.autocrlf input
+
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Prepare MSYS2
+        if: ${{ matrix.msys2 == '1' }}
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            base-devel
+            curl
+            diffutils
+            file
+            gawk
+            git
+            grep
+            gzip
+            make
+            mingw-w64-ucrt-x86_64-gcc
+            patch
+            perl
+            sed
+            tar
+            xz
+
+      - name: Syntax check
+        if: ${{ matrix.msys2 == '0' }}
+        run: sh -n adam
+
+      - name: Fake pkgsrc command suite
+        if: ${{ matrix.msys2 == '0' }}
+        run: sh tests/run.sh
+
+      - name: Syntax check
+        if: ${{ matrix.msys2 == '1' }}
+        shell: msys2 {0}
+        run: sh -n adam
+
+      - name: Fake pkgsrc command suite
+        if: ${{ matrix.msys2 == '1' }}
+        shell: msys2 {0}
+        run: sh tests/run.sh
+
+  command-suite-bsd:
+    name: Command suite (${{ matrix.os.name }}-${{ matrix.os.architecture }})
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: cpa.sh {0}
     strategy:
       fail-fast: false
       matrix:
         os:
-          - ubuntu-latest
-          - macos-latest
+          - name: freebsd
+            version: "14.4"
+            architecture: x86-64
+          - name: freebsd
+            version: "14.4"
+            architecture: arm64
+          - name: netbsd
+            version: "10.1"
+            architecture: x86-64
+          - name: netbsd
+            version: "10.1"
+            architecture: arm64
+          - name: openbsd
+            version: "7.9"
+            architecture: x86-64
+          - name: openbsd
+            version: "7.9"
+            architecture: arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
           persist-credentials: false
+
+      - name: Start ${{ matrix.os.name }} VM
+        uses: cross-platform-actions/action@v1.2.0
+        with:
+          operating_system: ${{ matrix.os.name }}
+          version: ${{ matrix.os.version }}
+          architecture: ${{ matrix.os.architecture }}
+          shell: sh
+          memory: 4G
+          cpu_count: 2
 
       - name: Syntax check
         run: sh -n adam
 
-      - name: Fake pkgsrc test suite
+      - name: Fake pkgsrc command suite
         run: sh tests/run.sh
 
-  pkgsrc-real-build-native:
-    name: Real pkgsrc lifecycle (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+  pkgsrc-lifecycle-native:
+    name: Representative pkgsrc lifecycle (${{ matrix.name }})
+    runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
+        include:
+          - name: linux-x64
+            runs_on: ubuntu-24.04
+            test_pkg: devel/git-base
+            msys2: "0"
+          - name: linux-arm64
+            runs_on: ubuntu-24.04-arm
+            test_pkg: misc/figlet
+            msys2: "0"
+          - name: macos-arm64
+            runs_on: macos-15
+            test_pkg: misc/figlet
+            msys2: "0"
+          - name: windows-msys2
+            runs_on: windows-2022
+            test_pkg: misc/figlet
+            msys2: "1"
     steps:
+      - name: Disable Windows line-ending conversion
+        if: ${{ matrix.msys2 == '1' }}
+        run: git config --global core.autocrlf input
+
       - name: Checkout
         uses: actions/checkout@v5
         with:
           persist-credentials: false
 
-      - name: Install, test, and remove complex pkgsrc package
+      - name: Prepare MSYS2
+        if: ${{ matrix.msys2 == '1' }}
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            base-devel
+            curl
+            diffutils
+            file
+            gawk
+            git
+            grep
+            gzip
+            make
+            mingw-w64-ucrt-x86_64-gcc
+            patch
+            perl
+            sed
+            tar
+            xz
+
+      - name: Install, test, and remove pkgsrc package
+        if: ${{ matrix.msys2 == '0' }}
         env:
           PKGSRC_BOOTSTRAP: unprivileged
           PKGSRC_DIR: ${{ runner.temp }}/pkgsrc
           PKGSRC_PREFIX: ${{ runner.temp }}/pkg
           STATE_DIR: ${{ runner.temp }}/adam-pkgsrc-state
           ADAM_TEST_BUILD_ROOT: "0"
-          TEST_PKG: devel/git-base
+          TEST_PKG: ${{ matrix.test_pkg }}
         run: |
           uname -a
           sh tests/pkgsrc-smoke.sh lifecycle
 
-  pkgsrc-real-build-bsd:
-    name: Real pkgsrc lifecycle (${{ matrix.os.name }})
+      - name: Install, test, and remove pkgsrc package
+        if: ${{ matrix.msys2 == '1' }}
+        shell: msys2 {0}
+        env:
+          PKGSRC_BOOTSTRAP: unprivileged
+          ADAM_TEST_BUILD_ROOT: "0"
+          TEST_PKG: ${{ matrix.test_pkg }}
+        run: |
+          export PKGSRC_DIR="$(cygpath -u "$RUNNER_TEMP")/pkgsrc"
+          export PKGSRC_PREFIX="$(cygpath -u "$RUNNER_TEMP")/pkg"
+          export STATE_DIR="$(cygpath -u "$RUNNER_TEMP")/adam-pkgsrc-state"
+          uname -a
+          sh tests/pkgsrc-smoke.sh lifecycle
+
+  pkgsrc-lifecycle-bsd:
+    name: Representative pkgsrc lifecycle (${{ matrix.os.name }}-${{ matrix.os.architecture }})
     runs-on: ubuntu-latest
     timeout-minutes: 240
     defaults:
@@ -77,12 +235,20 @@ jobs:
       fail-fast: false
       matrix:
         os:
+          - name: freebsd
+            version: "14.4"
+            architecture: x86-64
+            bootstrap: privileged
+            make: /usr/pkg/bin/bmake
+            build_root: "1"
+            test_pkg: misc/figlet
           - name: netbsd
             version: "10.1"
             architecture: x86-64
             bootstrap: none
             make: make
             build_root: "1"
+            test_pkg: devel/git-base
           - name: openbsd
             version: "7.9"
             architecture: x86-64
@@ -104,7 +270,7 @@ jobs:
           STATE_DIR: /home/runner/work/adam-pkgsrc-state
           ADAM_TEST_MAKE_CMD: ${{ matrix.os.make }}
           ADAM_TEST_BUILD_ROOT: ${{ matrix.os.build_root }}
-          TEST_PKG: ${{ matrix.os.test_pkg || 'devel/git-base' }}
+          TEST_PKG: ${{ matrix.os.test_pkg }}
         with:
           operating_system: ${{ matrix.os.name }}
           version: ${{ matrix.os.version }}
@@ -114,14 +280,193 @@ jobs:
           cpu_count: 2
           environment_variables: PKGSRC_BOOTSTRAP PKGSRC_DIR STATE_DIR ADAM_TEST_MAKE_CMD ADAM_TEST_BUILD_ROOT TEST_PKG
 
-      - name: Install, test, and remove complex pkgsrc package on ${{ matrix.os.name }}
+      - name: Install, test, and remove pkgsrc package
         env:
           PKGSRC_BOOTSTRAP: ${{ matrix.os.bootstrap }}
           PKGSRC_DIR: /home/runner/work/pkgsrc
           STATE_DIR: /home/runner/work/adam-pkgsrc-state
           ADAM_TEST_MAKE_CMD: ${{ matrix.os.make }}
           ADAM_TEST_BUILD_ROOT: ${{ matrix.os.build_root }}
-          TEST_PKG: ${{ matrix.os.test_pkg || 'devel/git-base' }}
+          TEST_PKG: ${{ matrix.os.test_pkg }}
+        run: |
+          uname -a
+          sh tests/pkgsrc-smoke.sh lifecycle
+
+  pkgsrc-lifecycle-native-full:
+    name: Full pkgsrc lifecycle (${{ matrix.name }})
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ${{ matrix.runs_on }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runs_on: ubuntu-24.04
+            test_pkg: devel/git-base
+            msys2: "0"
+          - name: linux-arm64
+            runs_on: ubuntu-24.04-arm
+            test_pkg: devel/git-base
+            msys2: "0"
+          - name: macos-x64
+            runs_on: macos-15-intel
+            test_pkg: devel/git-base
+            msys2: "0"
+          - name: macos-arm64
+            runs_on: macos-15
+            test_pkg: devel/git-base
+            msys2: "0"
+          - name: windows-msys2
+            runs_on: windows-2022
+            test_pkg: misc/figlet
+            msys2: "1"
+    steps:
+      - name: Disable Windows line-ending conversion
+        if: ${{ matrix.msys2 == '1' }}
+        run: git config --global core.autocrlf input
+
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Prepare MSYS2
+        if: ${{ matrix.msys2 == '1' }}
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            base-devel
+            curl
+            diffutils
+            file
+            gawk
+            git
+            grep
+            gzip
+            make
+            mingw-w64-ucrt-x86_64-gcc
+            patch
+            perl
+            sed
+            tar
+            xz
+
+      - name: Install, test, and remove complex pkgsrc package
+        if: ${{ matrix.msys2 == '0' }}
+        env:
+          PKGSRC_BOOTSTRAP: unprivileged
+          PKGSRC_DIR: ${{ runner.temp }}/pkgsrc
+          PKGSRC_PREFIX: ${{ runner.temp }}/pkg
+          STATE_DIR: ${{ runner.temp }}/adam-pkgsrc-state
+          ADAM_TEST_BUILD_ROOT: "0"
+          TEST_PKG: ${{ matrix.test_pkg }}
+        run: |
+          uname -a
+          sh tests/pkgsrc-smoke.sh lifecycle
+
+      - name: Install, test, and remove pkgsrc package
+        if: ${{ matrix.msys2 == '1' }}
+        shell: msys2 {0}
+        env:
+          PKGSRC_BOOTSTRAP: unprivileged
+          ADAM_TEST_BUILD_ROOT: "0"
+          TEST_PKG: ${{ matrix.test_pkg }}
+        run: |
+          export PKGSRC_DIR="$(cygpath -u "$RUNNER_TEMP")/pkgsrc"
+          export PKGSRC_PREFIX="$(cygpath -u "$RUNNER_TEMP")/pkg"
+          export STATE_DIR="$(cygpath -u "$RUNNER_TEMP")/adam-pkgsrc-state"
+          uname -a
+          sh tests/pkgsrc-smoke.sh lifecycle
+
+  pkgsrc-lifecycle-bsd-full:
+    name: Full pkgsrc lifecycle (${{ matrix.os.name }}-${{ matrix.os.architecture }})
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: cpa.sh {0}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: freebsd
+            version: "14.4"
+            architecture: x86-64
+            bootstrap: privileged
+            make: /usr/pkg/bin/bmake
+            build_root: "1"
+            test_pkg: misc/figlet
+          - name: freebsd
+            version: "14.4"
+            architecture: arm64
+            bootstrap: privileged
+            make: /usr/pkg/bin/bmake
+            build_root: "1"
+            test_pkg: misc/figlet
+          - name: netbsd
+            version: "10.1"
+            architecture: x86-64
+            bootstrap: none
+            make: make
+            build_root: "1"
+            test_pkg: devel/git-base
+          - name: netbsd
+            version: "10.1"
+            architecture: arm64
+            bootstrap: none
+            make: make
+            build_root: "1"
+            test_pkg: devel/git-base
+          - name: openbsd
+            version: "7.9"
+            architecture: x86-64
+            bootstrap: privileged
+            make: /usr/pkg/bin/bmake
+            build_root: "1"
+            test_pkg: devel/gmake
+          - name: openbsd
+            version: "7.9"
+            architecture: arm64
+            bootstrap: privileged
+            make: /usr/pkg/bin/bmake
+            build_root: "1"
+            test_pkg: devel/gmake
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Start ${{ matrix.os.name }} VM
+        uses: cross-platform-actions/action@v1.2.0
+        env:
+          PKGSRC_BOOTSTRAP: ${{ matrix.os.bootstrap }}
+          PKGSRC_DIR: /home/runner/work/pkgsrc
+          STATE_DIR: /home/runner/work/adam-pkgsrc-state
+          ADAM_TEST_MAKE_CMD: ${{ matrix.os.make }}
+          ADAM_TEST_BUILD_ROOT: ${{ matrix.os.build_root }}
+          TEST_PKG: ${{ matrix.os.test_pkg }}
+        with:
+          operating_system: ${{ matrix.os.name }}
+          version: ${{ matrix.os.version }}
+          architecture: ${{ matrix.os.architecture }}
+          shell: sh
+          memory: 6G
+          cpu_count: 2
+          environment_variables: PKGSRC_BOOTSTRAP PKGSRC_DIR STATE_DIR ADAM_TEST_MAKE_CMD ADAM_TEST_BUILD_ROOT TEST_PKG
+
+      - name: Install, test, and remove pkgsrc package
+        env:
+          PKGSRC_BOOTSTRAP: ${{ matrix.os.bootstrap }}
+          PKGSRC_DIR: /home/runner/work/pkgsrc
+          STATE_DIR: /home/runner/work/adam-pkgsrc-state
+          ADAM_TEST_MAKE_CMD: ${{ matrix.os.make }}
+          ADAM_TEST_BUILD_ROOT: ${{ matrix.os.build_root }}
+          TEST_PKG: ${{ matrix.os.test_pkg }}
         run: |
           uname -a
           sh tests/pkgsrc-smoke.sh lifecycle
