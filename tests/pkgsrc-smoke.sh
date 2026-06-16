@@ -7,11 +7,13 @@ MODE="${1:-smoke}"
 PKGSRC_DIR="${PKGSRC_DIR:-/tmp/pkgsrc}"
 STATE_DIR="${STATE_DIR:-/tmp/adam-pkgsrc-smoke-state}"
 PKGSRC_TARBALL="${PKGSRC_TARBALL:-https://cdn.NetBSD.org/pub/pkgsrc/stable/pkgsrc.tar.gz}"
+PKGSRC_TARBALLS="${PKGSRC_TARBALLS:-$PKGSRC_TARBALL https://ftp.NetBSD.org/pub/pkgsrc/stable/pkgsrc.tar.gz}"
 TEST_PKG="${TEST_PKG:-misc/figlet}"
 PKGSRC_BOOTSTRAP="${PKGSRC_BOOTSTRAP:-none}"
 ADAM_TEST_MAKE_CMD="${ADAM_TEST_MAKE_CMD:-}"
 ADAM_TEST_BUILD_ROOT="${ADAM_TEST_BUILD_ROOT:-0}"
 BMAKE_MIN_VERSION="${BMAKE_MIN_VERSION:-20240711}"
+PKGSRC_FETCHED_TARBALL=""
 
 case "$PKGSRC_BOOTSTRAP" in
     unprivileged)
@@ -47,22 +49,47 @@ ok() {
 fetch_file() {
     url=$1
     out=$2
+    partial="${out}.part"
     attempts=0
     while [ "$attempts" -lt 5 ]; do
         attempts=$((attempts + 1))
-        if command -v ftp >/dev/null 2>&1; then
-            ftp -o "$out" "$url" && return 0
-        elif command -v curl >/dev/null 2>&1; then
-            curl -fsSL "$url" -o "$out" && return 0
+        printf 'fetching pkgsrc: %s (attempt %s)\n' "$url" "$attempts"
+        if command -v curl >/dev/null 2>&1; then
+            if curl -fL --retry 3 --retry-delay 5 --retry-connrefused -C - "$url" -o "$partial"; then
+                mv "$partial" "$out"
+                PKGSRC_FETCHED_TARBALL="$url"
+                return 0
+            fi
         elif command -v wget >/dev/null 2>&1; then
-            wget -O "$out" "$url" && return 0
+            if wget -c -O "$partial" "$url"; then
+                mv "$partial" "$out"
+                PKGSRC_FETCHED_TARBALL="$url"
+                return 0
+            fi
+        elif command -v ftp >/dev/null 2>&1; then
+            if ftp -o "$partial" "$url"; then
+                mv "$partial" "$out"
+                PKGSRC_FETCHED_TARBALL="$url"
+                return 0
+            fi
         else
             fail "no fetch tool found"
         fi
-        rm -f "$out"
+        rm -f "$partial"
         [ "$attempts" -lt 5 ] || return 1
         sleep $((attempts * 5))
     done
+}
+
+fetch_pkgsrc_archive() {
+    out=$1
+    for url in $PKGSRC_TARBALLS; do
+        if fetch_file "$url" "$out"; then
+            return 0
+        fi
+        rm -f "$out"
+    done
+    return 1
 }
 
 ensure_pkgsrc() {
@@ -77,8 +104,8 @@ ensure_pkgsrc() {
     mkdir -p "$pkgsrc_parent"
     rm -rf "$PKGSRC_DIR" "$extract_parent"
     mkdir -p "$extract_parent"
-    fetch_file "$PKGSRC_TARBALL" "$archive"
-    case "$PKGSRC_TARBALL" in
+    fetch_pkgsrc_archive "$archive" || fail "unable to fetch pkgsrc archive"
+    case "$PKGSRC_FETCHED_TARBALL" in
         *.tar.xz) tar -C "$extract_parent" -xJf "$archive" ;;
         *.tar.gz|*.tgz) tar -C "$extract_parent" -xzf "$archive" ;;
         *) tar -C "$extract_parent" -xf "$archive" ;;
