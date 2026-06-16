@@ -26,68 +26,22 @@ jobs:
         include:
           - name: linux-x64
             runs_on: ubuntu-24.04
-            msys2: "0"
           - name: linux-arm64
             runs_on: ubuntu-24.04-arm
-            msys2: "0"
           - name: macos-x64
             runs_on: macos-15-intel
-            msys2: "0"
           - name: macos-arm64
             runs_on: macos-15
-            msys2: "0"
-          - name: windows-msys2
-            runs_on: windows-2022
-            msys2: "1"
     steps:
-      - name: Disable Windows line-ending conversion
-        if: ${{ matrix.msys2 == '1' }}
-        run: git config --global core.autocrlf input
-
       - name: Checkout
         uses: actions/checkout@v5
         with:
           persist-credentials: false
 
-      - name: Prepare MSYS2
-        if: ${{ matrix.msys2 == '1' }}
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            base-devel
-            curl
-            diffutils
-            file
-            gawk
-            git
-            grep
-            gzip
-            make
-            mingw-w64-ucrt-x86_64-gcc
-            patch
-            perl
-            sed
-            tar
-            xz
-
       - name: Syntax check
-        if: ${{ matrix.msys2 == '0' }}
         run: sh -n adam
 
       - name: Fake pkgsrc command suite
-        if: ${{ matrix.msys2 == '0' }}
-        run: sh tests/run.sh
-
-      - name: Syntax check
-        if: ${{ matrix.msys2 == '1' }}
-        shell: msys2 {0}
-        run: sh -n adam
-
-      - name: Fake pkgsrc command suite
-        if: ${{ matrix.msys2 == '1' }}
-        shell: msys2 {0}
         run: sh tests/run.sh
 
   command-suite-bsd:
@@ -151,54 +105,19 @@ jobs:
           - name: linux-x64
             runs_on: ubuntu-24.04
             test_pkg: devel/git-base
-            msys2: "0"
           - name: linux-arm64
             runs_on: ubuntu-24.04-arm
             test_pkg: misc/figlet
-            msys2: "0"
           - name: macos-arm64
             runs_on: macos-15
             test_pkg: misc/figlet
-            msys2: "0"
-          - name: windows-msys2
-            runs_on: windows-2022
-            test_pkg: misc/figlet
-            msys2: "1"
     steps:
-      - name: Disable Windows line-ending conversion
-        if: ${{ matrix.msys2 == '1' }}
-        run: git config --global core.autocrlf input
-
       - name: Checkout
         uses: actions/checkout@v5
         with:
           persist-credentials: false
 
-      - name: Prepare MSYS2
-        if: ${{ matrix.msys2 == '1' }}
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            base-devel
-            curl
-            diffutils
-            file
-            gawk
-            git
-            grep
-            gzip
-            make
-            mingw-w64-ucrt-x86_64-gcc
-            patch
-            perl
-            sed
-            tar
-            xz
-
       - name: Install, test, and remove pkgsrc package
-        if: ${{ matrix.msys2 == '0' }}
         env:
           PKGSRC_BOOTSTRAP: unprivileged
           PKGSRC_DIR: ${{ runner.temp }}/pkgsrc
@@ -207,20 +126,6 @@ jobs:
           ADAM_TEST_BUILD_ROOT: "0"
           TEST_PKG: ${{ matrix.test_pkg }}
         run: |
-          uname -a
-          sh tests/pkgsrc-smoke.sh lifecycle
-
-      - name: Install, test, and remove pkgsrc package
-        if: ${{ matrix.msys2 == '1' }}
-        shell: msys2 {0}
-        env:
-          PKGSRC_BOOTSTRAP: unprivileged
-          ADAM_TEST_BUILD_ROOT: "0"
-          TEST_PKG: ${{ matrix.test_pkg }}
-        run: |
-          export PKGSRC_DIR="$(cygpath -u "$RUNNER_TEMP")/pkgsrc"
-          export PKGSRC_PREFIX="$(cygpath -u "$RUNNER_TEMP")/pkg"
-          export STATE_DIR="$(cygpath -u "$RUNNER_TEMP")/adam-pkgsrc-state"
           uname -a
           sh tests/pkgsrc-smoke.sh lifecycle
 
@@ -304,58 +209,22 @@ jobs:
           - name: linux-x64
             runs_on: ubuntu-24.04
             test_pkg: devel/git-base
-            msys2: "0"
           - name: linux-arm64
             runs_on: ubuntu-24.04-arm
             test_pkg: devel/git-base
-            msys2: "0"
           - name: macos-x64
             runs_on: macos-15-intel
             test_pkg: devel/git-base
-            msys2: "0"
           - name: macos-arm64
             runs_on: macos-15
             test_pkg: devel/git-base
-            msys2: "0"
-          - name: windows-msys2
-            runs_on: windows-2022
-            test_pkg: misc/figlet
-            msys2: "1"
     steps:
-      - name: Disable Windows line-ending conversion
-        if: ${{ matrix.msys2 == '1' }}
-        run: git config --global core.autocrlf input
-
       - name: Checkout
         uses: actions/checkout@v5
         with:
           persist-credentials: false
 
-      - name: Prepare MSYS2
-        if: ${{ matrix.msys2 == '1' }}
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            base-devel
-            curl
-            diffutils
-            file
-            gawk
-            git
-            grep
-            gzip
-            make
-            mingw-w64-ucrt-x86_64-gcc
-            patch
-            perl
-            sed
-            tar
-            xz
-
       - name: Install, test, and remove complex pkgsrc package
-        if: ${{ matrix.msys2 == '0' }}
         env:
           PKGSRC_BOOTSTRAP: unprivileged
           PKGSRC_DIR: ${{ runner.temp }}/pkgsrc
@@ -364,20 +233,6 @@ jobs:
           ADAM_TEST_BUILD_ROOT: "0"
           TEST_PKG: ${{ matrix.test_pkg }}
         run: |
-          uname -a
-          sh tests/pkgsrc-smoke.sh lifecycle
-
-      - name: Install, test, and remove pkgsrc package
-        if: ${{ matrix.msys2 == '1' }}
-        shell: msys2 {0}
-        env:
-          PKGSRC_BOOTSTRAP: unprivileged
-          ADAM_TEST_BUILD_ROOT: "0"
-          TEST_PKG: ${{ matrix.test_pkg }}
-        run: |
-          export PKGSRC_DIR="$(cygpath -u "$RUNNER_TEMP")/pkgsrc"
-          export PKGSRC_PREFIX="$(cygpath -u "$RUNNER_TEMP")/pkg"
-          export STATE_DIR="$(cygpath -u "$RUNNER_TEMP")/adam-pkgsrc-state"
           uname -a
           sh tests/pkgsrc-smoke.sh lifecycle
 
