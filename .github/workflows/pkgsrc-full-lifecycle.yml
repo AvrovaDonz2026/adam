@@ -1,0 +1,141 @@
+name: pkgsrc Full Lifecycle
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pkgsrc-full-lifecycle-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  lifecycle-native-full:
+    name: Full pkgsrc lifecycle (${{ matrix.name }})
+    runs-on: ${{ matrix.runs_on }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runs_on: ubuntu-24.04
+            test_pkg: devel/git-base
+          - name: linux-arm64
+            runs_on: ubuntu-24.04-arm
+            test_pkg: devel/git-base
+          - name: macos-x64
+            runs_on: macos-15-intel
+            test_pkg: devel/git-base
+          - name: macos-arm64
+            runs_on: macos-15
+            test_pkg: devel/git-base
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Install, test, and remove complex pkgsrc package
+        env:
+          PKGSRC_BOOTSTRAP: unprivileged
+          PKGSRC_DIR: ${{ runner.temp }}/pkgsrc
+          PKGSRC_PREFIX: ${{ runner.temp }}/pkg
+          STATE_DIR: ${{ runner.temp }}/adam-pkgsrc-state
+          ADAM_TEST_BUILD_ROOT: "0"
+          TEST_PKG: ${{ matrix.test_pkg }}
+        run: |
+          uname -a
+          sh tests/pkgsrc-smoke.sh lifecycle-only
+
+  lifecycle-bsd-full:
+    name: Full pkgsrc lifecycle (${{ matrix.os.name }}-${{ matrix.os.architecture }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: cpa.sh {0}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - name: freebsd
+            version: "14.4"
+            architecture: x86-64
+            bootstrap: privileged
+            make: /usr/pkg/bin/bmake
+            build_root: "1"
+            test_pkg: misc/figlet
+          - name: freebsd
+            version: "14.4"
+            architecture: arm64
+            bootstrap: privileged
+            make: /usr/pkg/bin/bmake
+            build_root: "1"
+            test_pkg: misc/figlet
+          - name: netbsd
+            version: "10.1"
+            architecture: x86-64
+            bootstrap: none
+            make: make
+            build_root: "1"
+            test_pkg: devel/git-base
+          - name: netbsd
+            version: "10.1"
+            architecture: arm64
+            bootstrap: none
+            make: make
+            build_root: "1"
+            test_pkg: devel/git-base
+          - name: openbsd
+            version: "7.9"
+            architecture: x86-64
+            bootstrap: privileged
+            make: /usr/pkg/bin/bmake
+            build_root: "1"
+            test_pkg: devel/gmake
+          - name: openbsd
+            version: "7.9"
+            architecture: arm64
+            bootstrap: privileged
+            make: /usr/pkg/bin/bmake
+            build_root: "1"
+            test_pkg: devel/gmake
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Start ${{ matrix.os.name }} VM
+        uses: cross-platform-actions/action@v1.2.0
+        env:
+          PKGSRC_BOOTSTRAP: ${{ matrix.os.bootstrap }}
+          PKGSRC_DIR: /home/runner/work/pkgsrc
+          STATE_DIR: /home/runner/work/adam-pkgsrc-state
+          ADAM_TEST_MAKE_CMD: ${{ matrix.os.make }}
+          ADAM_TEST_BUILD_ROOT: ${{ matrix.os.build_root }}
+          TEST_PKG: ${{ matrix.os.test_pkg }}
+        with:
+          operating_system: ${{ matrix.os.name }}
+          version: ${{ matrix.os.version }}
+          architecture: ${{ matrix.os.architecture }}
+          shell: sh
+          memory: 6G
+          cpu_count: 2
+          environment_variables: PKGSRC_BOOTSTRAP PKGSRC_DIR STATE_DIR ADAM_TEST_MAKE_CMD ADAM_TEST_BUILD_ROOT TEST_PKG
+
+      - name: Install, test, and remove pkgsrc package
+        env:
+          PKGSRC_BOOTSTRAP: ${{ matrix.os.bootstrap }}
+          PKGSRC_DIR: /home/runner/work/pkgsrc
+          STATE_DIR: /home/runner/work/adam-pkgsrc-state
+          ADAM_TEST_MAKE_CMD: ${{ matrix.os.make }}
+          ADAM_TEST_BUILD_ROOT: ${{ matrix.os.build_root }}
+          TEST_PKG: ${{ matrix.os.test_pkg }}
+        run: |
+          uname -a
+          sh tests/pkgsrc-smoke.sh lifecycle-only

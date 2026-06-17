@@ -513,16 +513,24 @@ ok "adam passes sh -n"
 sh "$ROOT/tests/run.sh"
 ok "fake-tree tests pass on this platform"
 
-run_command_surface
-
 case "$MODE" in
-    smoke)
+    smoke|command-surface)
+        run_command_surface
         ;;
     build)
+        run_command_surface
+        run_adam_real build "$TEST_PKG"
+        ok "real pkgsrc build completed for $TEST_PKG"
+        ;;
+    build-only)
         run_adam_real build "$TEST_PKG"
         ok "real pkgsrc build completed for $TEST_PKG"
         ;;
     lifecycle)
+        run_command_surface
+        run_lifecycle
+        ;;
+    lifecycle-only)
         run_lifecycle
         ;;
     *)

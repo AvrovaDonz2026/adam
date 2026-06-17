@@ -430,6 +430,12 @@ assert_contains "$WORK/policy.out" "Candidate: 1.0" "policy shows candidate"
 assert_contains "$WORK/policy.out" "Installed: 1.0" "policy shows installed version"
 ok "policy shows installed and candidate"
 
+run_adam_alt install category/app >/dev/null
+run_adam_alt policy category/app > "$WORK/policy-pkgpath.out"
+assert_contains "$WORK/policy-pkgpath.out" "Candidate: 1.0" "policy resolves pkgpath without available index"
+assert_contains "$WORK/policy-pkgpath.out" "Installed: 1.0" "policy reports installed pkgpath without available index"
+ok "policy resolves pkgpaths without full index"
+
 run_adam build-dep app > "$WORK/build-dep.out"
 cover build-dep
 assert_contains "$WORK/build-dep.out" "category/dep" "build-dep shows dependency"

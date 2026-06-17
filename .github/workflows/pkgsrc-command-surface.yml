@@ -1,0 +1,81 @@
+name: pkgsrc Command Surface
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pkgsrc-command-surface-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  command-surface-native:
+    name: pkgsrc command surface (linux-x64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Exercise Adam commands against real pkgsrc
+        env:
+          PKGSRC_BOOTSTRAP: unprivileged
+          PKGSRC_DIR: ${{ runner.temp }}/pkgsrc
+          PKGSRC_PREFIX: ${{ runner.temp }}/pkg
+          STATE_DIR: ${{ runner.temp }}/adam-pkgsrc-state
+          ADAM_TEST_BUILD_ROOT: "0"
+          TEST_PKG: devel/git-base
+        run: |
+          uname -a
+          sh tests/pkgsrc-smoke.sh command-surface
+
+  command-surface-bsd:
+    name: pkgsrc command surface (netbsd-x86-64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: cpa.sh {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Start netbsd VM
+        uses: cross-platform-actions/action@v1.2.0
+        env:
+          PKGSRC_BOOTSTRAP: none
+          PKGSRC_DIR: /home/runner/work/pkgsrc
+          STATE_DIR: /home/runner/work/adam-pkgsrc-state
+          ADAM_TEST_MAKE_CMD: make
+          ADAM_TEST_BUILD_ROOT: "1"
+          TEST_PKG: devel/git-base
+        with:
+          operating_system: netbsd
+          version: "10.1"
+          architecture: x86-64
+          shell: sh
+          memory: 6G
+          cpu_count: 2
+          environment_variables: PKGSRC_BOOTSTRAP PKGSRC_DIR STATE_DIR ADAM_TEST_MAKE_CMD ADAM_TEST_BUILD_ROOT TEST_PKG
+
+      - name: Exercise Adam commands against real pkgsrc
+        env:
+          PKGSRC_BOOTSTRAP: none
+          PKGSRC_DIR: /home/runner/work/pkgsrc
+          STATE_DIR: /home/runner/work/adam-pkgsrc-state
+          ADAM_TEST_MAKE_CMD: make
+          ADAM_TEST_BUILD_ROOT: "1"
+          TEST_PKG: devel/git-base
+        run: |
+          uname -a
+          sh tests/pkgsrc-smoke.sh command-surface

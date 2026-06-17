@@ -1541,6 +1541,7 @@ cmd_policy() {
     [ "$#" -gt 0 ] || die "policy requires a package"
     pkgpath=$(resolve_pkgpath_from_name "$1")
     line=$(db_lookup_available "$pkgpath")
+    [ -n "$line" ] || line=$(collect_pkg_metadata "$pkgpath")
     inst=$(db_lookup_installed "$(pkgmeta_field "$line" 1)")
     printf 'Package: %s\n' "$(pkgmeta_field "$line" 2)"
     printf 'Candidate: %s\n' "$(pkgmeta_field "$line" 4)"
