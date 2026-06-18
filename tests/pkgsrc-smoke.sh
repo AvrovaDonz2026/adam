@@ -371,18 +371,11 @@ available_pkgbase_for_path() {
 }
 
 run_command_surface() {
-    pkgname_hint=${TEST_PKG##*/}
-
     run_adam help > /tmp/adam-help.out
     grep "Usage:" /tmp/adam-help.out >/dev/null || fail "help reports usage"
     run_adam help install > /tmp/adam-help-install.out
     grep "adam install" /tmp/adam-help-install.out >/dev/null || fail "help install reports usage"
     ok "help commands work against real pkgsrc setup"
-
-    run_adam update >/dev/null
-    pkgbase=$(available_pkgbase_for_path "$TEST_PKG")
-    [ -n "$pkgbase" ] || pkgbase="$pkgname_hint"
-    ok "real pkgsrc index refresh completed"
 
     run_adam source "$TEST_PKG" > /tmp/adam-source.out
     grep "$TEST_PKG" /tmp/adam-source.out >/dev/null || fail "source resolves $TEST_PKG"
@@ -392,22 +385,15 @@ run_command_surface() {
     grep "$TEST_PKG" /tmp/adam-dry-run.out >/dev/null || fail "dry-run install references $TEST_PKG"
     ok "source, plan, and dry-run install work against real pkgsrc"
 
-    run_adam search "$pkgbase" > /tmp/adam-search.out
-    grep "$TEST_PKG" /tmp/adam-search.out >/dev/null || fail "search finds $TEST_PKG"
     run_adam show "$TEST_PKG" > /tmp/adam-show.out
     grep "Package:" /tmp/adam-show.out >/dev/null || fail "show reports package metadata"
-    run_adam list --all-versions > /tmp/adam-list-all.out
-    grep "$TEST_PKG" /tmp/adam-list-all.out >/dev/null || fail "list --all-versions includes $TEST_PKG"
-    run_adam pkgnames "$pkgbase" > /tmp/adam-pkgnames.out
-    grep "$pkgbase" /tmp/adam-pkgnames.out >/dev/null || fail "pkgnames finds $pkgbase"
-    ok "metadata query commands work against real pkgsrc"
+    ok "direct metadata query commands work against real pkgsrc"
 
     run_adam depends "$TEST_PKG" > /tmp/adam-depends.out
-    run_adam rdepends "$TEST_PKG" > /tmp/adam-rdepends.out
     run_adam policy "$TEST_PKG" > /tmp/adam-policy.out
     grep "Candidate:" /tmp/adam-policy.out >/dev/null || fail "policy reports candidate"
     run_adam build-dep "$TEST_PKG" > /tmp/adam-build-dep.out
-    run_adam --dry-run satisfy "$pkgbase>=0" > /tmp/adam-satisfy.out
+    run_adam --dry-run satisfy "$TEST_PKG>=0" > /tmp/adam-satisfy.out
     grep "$TEST_PKG" /tmp/adam-satisfy.out >/dev/null || fail "satisfy plans $TEST_PKG"
     ok "dependency and policy commands work against real pkgsrc"
 
@@ -422,7 +408,7 @@ run_command_surface() {
 
     run_adam indextargets > /tmp/adam-indextargets.out
     grep "database" /tmp/adam-indextargets.out >/dev/null || fail "indextargets reports database"
-    run_adam changelog "$pkgbase" > /tmp/adam-changelog.out
+    run_adam changelog "${TEST_PKG##*/}" > /tmp/adam-changelog.out
     run_adam madison "$TEST_PKG" > /tmp/adam-madison.out
     grep "pkgsrc:$TEST_PKG" /tmp/adam-madison.out >/dev/null || fail "madison reports pkgsrc source"
     ok "source information commands work against real pkgsrc"
@@ -451,19 +437,39 @@ run_command_surface() {
     grep "\[available\]" /tmp/adam-db-dump.out >/dev/null || fail "db dump reports available section"
     ok "config and db inspection commands work against real pkgsrc"
 
-    run_adam check --repair > /tmp/adam-check.out
-    grep "repaired" /tmp/adam-check.out >/dev/null || fail "check --repair reports repaired"
     run_adam doctor > /tmp/adam-doctor.out
     grep "state dir:" /tmp/adam-doctor.out >/dev/null || fail "doctor reports state"
     run_adam stats > /tmp/adam-stats.out
     grep "available" /tmp/adam-stats.out >/dev/null || fail "stats reports available count"
-    run_adam dumpavail > /tmp/adam-dumpavail.out
-    grep "$TEST_PKG" /tmp/adam-dumpavail.out >/dev/null || fail "dumpavail includes $TEST_PKG"
     run_adam clean > /tmp/adam-clean.out
     grep "cleaned" /tmp/adam-clean.out >/dev/null || fail "clean reports cleaned"
     run_adam autoclean > /tmp/adam-autoclean.out
     grep "cleaned" /tmp/adam-autoclean.out >/dev/null || fail "autoclean reports cleaned"
     ok "diagnostic and cleanup commands work against real pkgsrc"
+}
+
+run_command_index_full() {
+    pkgname_hint=${TEST_PKG##*/}
+
+    run_adam update >/dev/null
+    pkgbase=$(available_pkgbase_for_path "$TEST_PKG")
+    [ -n "$pkgbase" ] || pkgbase="$pkgname_hint"
+    ok "real pkgsrc index refresh completed"
+
+    run_adam search "$pkgbase" > /tmp/adam-search.out
+    grep "$TEST_PKG" /tmp/adam-search.out >/dev/null || fail "search finds $TEST_PKG"
+    run_adam list --all-versions > /tmp/adam-list-all.out
+    grep "$TEST_PKG" /tmp/adam-list-all.out >/dev/null || fail "list --all-versions includes $TEST_PKG"
+    run_adam pkgnames "$pkgbase" > /tmp/adam-pkgnames.out
+    grep "$pkgbase" /tmp/adam-pkgnames.out >/dev/null || fail "pkgnames finds $pkgbase"
+    ok "full-index metadata query commands work against real pkgsrc"
+
+    run_adam rdepends "$TEST_PKG" > /tmp/adam-rdepends.out
+    run_adam dumpavail > /tmp/adam-dumpavail.out
+    grep "$TEST_PKG" /tmp/adam-dumpavail.out >/dev/null || fail "dumpavail includes $TEST_PKG"
+    run_adam check --repair > /tmp/adam-check.out
+    grep "repaired" /tmp/adam-check.out >/dev/null || fail "check --repair reports repaired"
+    ok "full-index diagnostic commands work against real pkgsrc"
 }
 
 run_lifecycle() {
@@ -516,6 +522,9 @@ ok "fake-tree tests pass on this platform"
 case "$MODE" in
     smoke|command-surface)
         run_command_surface
+        ;;
+    command-index-full)
+        run_command_index_full
         ;;
     build)
         run_command_surface

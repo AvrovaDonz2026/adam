@@ -18,7 +18,7 @@ jobs:
   command-surface-native:
     name: pkgsrc command surface (linux-x64)
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -40,7 +40,7 @@ jobs:
   command-surface-bsd:
     name: pkgsrc command surface (netbsd-x86-64)
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 90
     defaults:
       run:
         shell: cpa.sh {0}
