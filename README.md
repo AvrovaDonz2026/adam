@@ -1,6 +1,7 @@
 # Adam
 
 [![CI](https://github.com/AvrovaDonz2026/adam/actions/workflows/ci.yml/badge.svg)](https://github.com/AvrovaDonz2026/adam/actions/workflows/ci.yml)
+[![pkgsrc Command Surface](https://github.com/AvrovaDonz2026/adam/actions/workflows/pkgsrc-command-surface.yml/badge.svg)](https://github.com/AvrovaDonz2026/adam/actions/workflows/pkgsrc-command-surface.yml)
 
 Adam is a source-first package manager front-end for pkgsrc, written in POSIX `sh`.
 
@@ -139,9 +140,29 @@ Run:
 sh tests/run.sh
 ```
 
-The test suite uses fake tools and a fake pkgsrc tree. It covers every current public Adam command and failure paths.
+Run real pkgsrc smoke tests:
 
-CI runs the fake-tool suite on Ubuntu and macOS, then runs the same suite inside the real pkgsrc integration script. The integration jobs download stable pkgsrc and install, inspect, remove, and autoremove complex packages from source on every push and pull request: `devel/git-base` on Linux, macOS, and NetBSD, and `devel/gmake` on OpenBSD. Linux and macOS use unprivileged pkgsrc bootstrap under the runner temp directory; NetBSD uses the native pkgsrc toolchain; OpenBSD bootstraps privileged pkgsrc under `/usr/pkg`.
+```sh
+sh tests/pkgsrc-smoke.sh command-surface
+sh tests/pkgsrc-smoke.sh lifecycle-only
+sh tests/pkgsrc-smoke.sh command-index-full
+```
+
+`command-surface` is the fast real-pkgsrc path used on push and pull request.
+`lifecycle-only` covers install, remove, and autoremove without re-running the full index.
+`command-index-full` keeps the expensive index-refresh path as a manual check.
+
+The fake suite uses fake tools and a fake pkgsrc tree. It covers every public Adam command and failure paths.
+
+CI is split by responsibility:
+
+- `CI`: fake command coverage on Ubuntu, macOS, and BSD.
+- `pkgsrc Command Surface`: fast real pkgsrc command coverage on Linux x64 and NetBSD x64.
+- `pkgsrc Lifecycle`: representative real install/remove coverage on Linux, macOS, and BSD.
+- `pkgsrc Full Lifecycle`: manual/nightly full lifecycle on x64/arm.
+- `pkgsrc Index Surface`: manual full-index command coverage.
+
+The real pkgsrc jobs download stable pkgsrc and exercise source-first behavior under the appropriate bootstrap/toolchain for each platform.
 
 ## More Documentation
 
